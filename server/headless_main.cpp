@@ -37,6 +37,7 @@
 extern "C"
 {
 	int listen_socket = -1;
+	extern int headset_listen_socket;
 }
 
 std::optional<wivrn::typed_socket<wivrn::UnixDatagram, to_monado::packets, from_monado::packets>> wivrn_ipc_socket_monado;
@@ -45,6 +46,7 @@ namespace
 {
 std::optional<wivrn::typed_socket<wivrn::UnixDatagram, from_monado::packets, to_monado::packets>> wivrn_ipc_socket_headless;
 int control_pipe_fds[2] = {-1, -1};
+std::unique_ptr<wivrn::TCPListener> headset_listener;
 
 void
 print_usage(const char * argv0)
@@ -175,14 +177,15 @@ int
 wait_for_initial_connection(std::stop_token stop_token, wivrn::wivrn_connection::encryption_state state, const std::string & pin)
 {
 	wivrn::configuration config;
-	wivrn::TCPListener listener(config.port);
+	headset_listener = std::make_unique<wivrn::TCPListener>(config.port);
+	headset_listen_socket = headset_listener->get_fd();
 
 	while (!stop_token.stop_requested())
 	{
 		try
 		{
 			std::cerr << "Waiting for initial headset connection on TCP port " << config.port << "\n";
-			auto tcp = listener.accept().first;
+			auto tcp = headset_listener->accept().first;
 			connection = std::make_unique<wivrn::wivrn_connection>(stop_token, state, pin, std::move(tcp));
 			std::cerr << "Initial headset handshake completed\n";
 			return EXIT_SUCCESS;
