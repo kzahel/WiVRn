@@ -88,6 +88,11 @@ class wivrn_comp_target : public comp_target
 	int64_t current_frame_id = 0;
 
 	pseudo_swapchain psc;
+	struct rgba_debug_samples
+	{
+		std::array<buffer_allocation, 2> buffers;
+		uint64_t log_count = 0;
+	} rgba_debug;
 
 	VkColorSpaceKHR color_space;
 	uint32_t image_array_layers = 3;

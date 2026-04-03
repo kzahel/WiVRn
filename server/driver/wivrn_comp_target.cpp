@@ -266,6 +266,25 @@ VkResult wivrn_comp_target::create_images_impl(vk::ImageUsageFlags flags)
 	         .commandBufferCount = 1})[0]);
 	wivrn_bundle->name(psc.command_buffer, "comp target command buffer");
 
+	if (rgba_target)
+	{
+		for (uint32_t eye = 0; eye < 2; ++eye)
+		{
+			rgba_debug.buffers[eye] = buffer_allocation(
+			        device,
+			        {
+			                .size = vk::DeviceSize(8),
+			                .usage = vk::BufferUsageFlagBits::eTransferDst,
+			        },
+			        {
+			                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+			                .usage = VMA_MEMORY_USAGE_AUTO,
+			        },
+			        std::format("comp target rgba debug {}", eye));
+		}
+		rgba_debug.log_count = 0;
+	}
+
 	return VK_SUCCESS;
 }
 void wivrn_comp_target::destroy_images()
@@ -282,6 +301,8 @@ void wivrn_comp_target::destroy_images()
 	encoders.clear();
 
 	psc.images.clear();
+	for (auto & buffer: rgba_debug.buffers)
+		buffer = {};
 
 	free(images);
 	images = nullptr;
@@ -465,11 +486,11 @@ void wivrn_comp_target::run_present(std::stop_token stop_token, int index, std::
 			if (status & 1)
 				return;
 
-			if (not(status & status_bit))
-			{
-				psc.status.wait(status);
-				continue;
-			}
+		if (not(status & status_bit))
+		{
+			psc.status.wait(status);
+			continue;
+		}
 		}
 
 		// Get local copies before releasing the image
@@ -477,6 +498,29 @@ void wivrn_comp_target::run_present(std::stop_token stop_token, int index, std::
 		auto frame_index = psc.frame_index;
 
 		auto res = vk.device.waitForFences(*psc.fence, true, UINT64_MAX);
+		if (index == 0 && settings[0].rgba_input)
+		{
+			++rgba_debug.log_count;
+			if (rgba_debug.log_count <= 5 || rgba_debug.log_count % 120 == 0)
+			{
+				for (uint32_t eye = 0; eye < 2; ++eye)
+				{
+					auto *sample = rgba_debug.buffers[eye].data<uint8_t>();
+					fprintf(stderr,
+					        "apple-source frame=%llu eye=%u rgba0=(%u,%u,%u,%u) rgbaC=(%u,%u,%u,%u)\n",
+					        (unsigned long long)frame_index,
+					        eye,
+					        unsigned(sample[0]),
+					        unsigned(sample[1]),
+					        unsigned(sample[2]),
+					        unsigned(sample[3]),
+					        unsigned(sample[4]),
+					        unsigned(sample[5]),
+					        unsigned(sample[6]),
+					        unsigned(sample[7]));
+				}
+			}
+		}
 
 		try
 		{
@@ -567,6 +611,48 @@ VkResult wivrn_comp_target::present(
 	{
 		if (encoder->stream_idx == 2 and not do_alpha)
 			continue;
+		if (settings[0].rgba_input && encoder->stream_idx < 2)
+		{
+			const int32_t center_x = int32_t(width / 2);
+			const int32_t center_y = int32_t(height / 2);
+			command_buffer.copyImageToBuffer(
+			        psc_image.image,
+			        vk::ImageLayout::eTransferSrcOptimal,
+			        rgba_debug.buffers[encoder->stream_idx],
+			        {
+			                vk::BufferImageCopy{
+			                        .bufferOffset = 0,
+			                        .imageSubresource = {
+			                                .aspectMask = vk::ImageAspectFlagBits::eColor,
+			                                .baseArrayLayer = encoder->stream_idx,
+			                                .layerCount = 1,
+			                        },
+			                        .imageExtent = {
+			                                .width = 1,
+			                                .height = 1,
+			                                .depth = 1,
+			                        },
+			                },
+			                vk::BufferImageCopy{
+			                        .bufferOffset = 4,
+			                        .imageSubresource = {
+			                                .aspectMask = vk::ImageAspectFlagBits::eColor,
+			                                .baseArrayLayer = encoder->stream_idx,
+			                                .layerCount = 1,
+			                        },
+			                        .imageOffset = {
+			                                center_x,
+			                                center_y,
+			                                0,
+			                        },
+			                        .imageExtent = {
+			                                .width = 1,
+			                                .height = 1,
+			                                .depth = 1,
+			                        },
+			                },
+			        });
+		}
 		auto [transfer, sem] = encoder->present_image(
 		        psc_image.image,
 		        need_queue_transfer,
