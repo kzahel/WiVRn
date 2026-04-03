@@ -58,6 +58,11 @@
 #include <chrono>
 #include <magic_enum.hpp>
 #include <stdexcept>
+
+// Monado renamed these members on xrt_system_devices; keep the WiVRn code path
+// readable while this port branch is catching up with the newer fork.
+#define xdevs static_xdevs
+#define xdev_count static_xdev_count
 #include <string.h>
 #include <utility>
 #include <vulkan/vulkan.h>

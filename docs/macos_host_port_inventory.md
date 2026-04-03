@@ -167,10 +167,22 @@ The next branch pass adds a first macOS-only host executable,
 As of the April 3, 2026 compile probe on the reference machine:
 
 - `cmake -S . -B build-macos-host ...` succeeds for the headless target
-- `ninja -C build-macos-host wivrn-server-headless` gets deep into WiVRn
-  server compilation
-- the remaining blockers are now Monado-facing API mismatches, not generic
-  host-shell or Darwin portability issues
+- `ninja -C build-macos-host wivrn-server-headless` succeeds
+- `wivrn-server-headless --help` succeeds
+- `wivrn-server-headless --no-encrypt` starts and waits for a headset
+  connection on TCP port `9757`
+
+The key compatibility changes that enabled that checkpoint were:
+
+- minimal Monado compatibility shims for:
+  - `comp_target_image.view_cbcr`
+  - `render_resources.distortion.buffer`
+  - `render_compute_distortion_foveation_data`
+  - `RENDER_FOVEATION_BUFFER_DIMENSIONS`
+- Monado helper/session drift reconciliation in WiVRn:
+  - `u_builders.h` updated to `target_builder_helpers.h`
+  - `xdevs` / `xdev_count` reconciled with newer
+    `static_xdevs` / `static_xdev_count`
 
 ## Monado Patch Inventory
 
@@ -271,7 +283,9 @@ Concrete evidence from the current headless build:
 
 Those symbols appear directly in WiVRn's
 `patches/monado/0005-Replace-distortion-with-foveation.patch` and do not exist
-in the current macOS Monado fork.
+in stock current Monado. The active macOS fork now carries a minimal
+compile-compatibility shim for them, but not the full upstream WiVRn
+implementation yet.
 
 #### Monado helper/session drift beyond WiVRn patch 0005
 
@@ -292,6 +306,16 @@ Assessment:
   active macOS fork
 - it should be handled alongside the patch-port matrix, not treated as an
   unrelated macOS problem
+
+The branch now handles the easy session drift pieces:
+
+- `u_builders.h` updated to `target_builder_helpers.h`
+- `xdevs` / `xdev_count` reconciled with Monado's current
+  `static_xdevs` / `static_xdev_count`
+
+That gets the headless host binary built and running. The next meaningful work
+is no longer compile-only reconciliation; it is first client handshake and then
+real stream bring-up.
 
 #### `0006-d-steamvr_lh-prevent-crash-on-vive-pro2-WiVRn.patch`
 

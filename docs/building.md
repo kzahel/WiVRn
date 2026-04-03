@@ -90,21 +90,32 @@ The next branch checkpoint is a new minimal host target:
 ninja -C build-macos-host wivrn-server-headless
 ```
 
-On the current macOS port branch, that target now configures and gets deep into
-WiVRn server compilation on Apple. The remaining failures are no longer Linux
-desktop-shell dependencies. They are Monado integration mismatches:
+On the current macOS port branch, that target now builds successfully on Apple
+against the active local Monado fork.
 
-- `server/driver/wivrn_foveation.cpp` and
-  `server/driver/wivrn_comp_target.cpp` still expect WiVRn's
-  `0005-Replace-distortion-with-foveation.patch` Monado interfaces:
-  `view_cbcr`, `distortion.buffer`,
-  `render_compute_distortion_foveation_data`, and
-  `RENDER_FOVEATION_BUFFER_DIMENSIONS`
-- `server/driver/wivrn_session.cpp` still expects older Monado target-session
-  device-array fields such as `xdevs` and `xdev_count`
+The build-only blockers from the previous pass have been cleared with:
 
-That is a useful checkpoint: the branch is now past generic macOS portability
-and into the concrete WiVRn-on-Monado patch-port work.
+- small Darwin portability fixes in WiVRn host-core code
+- Monado compatibility shims for WiVRn's current foveation/compositor
+  expectations
+- WiVRn session reconciliation with newer Monado device-array naming
+
+On the reference macOS machine, the following now works:
+
+```sh
+ninja -C build-macos-host wivrn-server-headless
+build-macos-host/server/wivrn-server-headless --help
+build-macos-host/server/wivrn-server-headless --no-encrypt
+```
+
+and the headless host starts with:
+
+- `WiVRn <rev> headless host starting`
+- `Encryption disabled for headless host`
+- `Waiting for initial headset connection on TCP port 9757`
+
+That is still not an end-to-end stream proof. It is the first concrete macOS
+host-binary checkpoint above the runtime target.
 
 # Dashboard
 
