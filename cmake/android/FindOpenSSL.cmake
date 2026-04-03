@@ -2,6 +2,19 @@ if (NOT TARGET OpenSSL::Crypto)
     # The NDK does not include OpenSSL, download it
     set(OPENSSL_VERSION "3.6.0")
     set(OPENSSL_SHA256 b6a5f44b7eb69e3fa35dbf15524405b44837a481d43d81daddde3ff21fcbb8e9)
+    file(GLOB ANDROID_NDK_LLVM_BIN_DIRS LIST_DIRECTORIES true "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/*/bin")
+    list(LENGTH ANDROID_NDK_LLVM_BIN_DIRS ANDROID_NDK_LLVM_BIN_DIR_COUNT)
+    if (ANDROID_NDK_LLVM_BIN_DIR_COUNT EQUAL 0)
+        message(FATAL_ERROR "Could not find Android NDK LLVM toolchain bin directory under ${CMAKE_ANDROID_NDK}")
+    endif()
+    list(GET ANDROID_NDK_LLVM_BIN_DIRS 0 ANDROID_NDK_LLVM_BIN_DIR)
+    set(OPENSSL_BUILD_ENV_PATH "${ANDROID_NDK_LLVM_BIN_DIR}:/usr/bin:/bin:/usr/sbin:/sbin:$ENV{PATH}")
+    if (CMAKE_BUILD_PARALLEL_LEVEL)
+        set(OPENSSL_MAKE_JOBS "${CMAKE_BUILD_PARALLEL_LEVEL}")
+    else()
+        set(OPENSSL_MAKE_JOBS "4")
+    endif()
+
     if(NOT EXISTS ${FETCHCONTENT_BASE_DIR}/openssl-src)
         if(NOT EXISTS ${FETCHCONTENT_BASE_DIR}/openssl-${OPENSSL_VERSION}.tar.gz)
             if (EXISTS ${CMAKE_SOURCE_DIR}/openssl-${OPENSSL_VERSION}.tar.gz)
@@ -18,28 +31,40 @@ if (NOT TARGET OpenSSL::Crypto)
     endif()
 
     execute_process(
-        COMMAND ${CMAKE_COMMAND} -E env ANDROID_NDK_ROOT=${CMAKE_ANDROID_NDK} PATH=${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin:$ENV{PATH} ./Configure
+        COMMAND ${CMAKE_COMMAND} -E env ANDROID_NDK_ROOT=${CMAKE_ANDROID_NDK} PATH=${OPENSSL_BUILD_ENV_PATH} ./Configure
             android-arm64
             --prefix=${FETCHCONTENT_BASE_DIR}/openssl
             --openssldir=${FETCHCONTENT_BASE_DIR}/openssl
         WORKING_DIRECTORY ${FETCHCONTENT_BASE_DIR}/openssl-src
         OUTPUT_FILE ${CMAKE_BINARY_DIR}/openssl-config-out
         ERROR_FILE ${CMAKE_BINARY_DIR}/openssl-config-err
+        RESULT_VARIABLE OPENSSL_CONFIG_RESULT
     )
+    if (NOT OPENSSL_CONFIG_RESULT EQUAL 0)
+        message(FATAL_ERROR "OpenSSL configure failed, see ${CMAKE_BINARY_DIR}/openssl-config-out and ${CMAKE_BINARY_DIR}/openssl-config-err")
+    endif()
 
     if (NOT EXISTS ${FETCHCONTENT_BASE_DIR}/openssl/lib/libcrypto.so)
         execute_process(
-            COMMAND ${CMAKE_COMMAND} -E env ANDROID_NDK_ROOT=${CMAKE_ANDROID_NDK} PATH=${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin:$ENV{PATH} make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+            COMMAND ${CMAKE_COMMAND} -E env ANDROID_NDK_ROOT=${CMAKE_ANDROID_NDK} PATH=${OPENSSL_BUILD_ENV_PATH} make -j${OPENSSL_MAKE_JOBS}
             WORKING_DIRECTORY ${FETCHCONTENT_BASE_DIR}/openssl-src
             OUTPUT_FILE ${CMAKE_BINARY_DIR}/openssl-make-out
             ERROR_FILE ${CMAKE_BINARY_DIR}/openssl-make-err
+            RESULT_VARIABLE OPENSSL_MAKE_RESULT
         )
+        if (NOT OPENSSL_MAKE_RESULT EQUAL 0)
+            message(FATAL_ERROR "OpenSSL make failed, see ${CMAKE_BINARY_DIR}/openssl-make-out and ${CMAKE_BINARY_DIR}/openssl-make-err")
+        endif()
         execute_process(
-            COMMAND ${CMAKE_COMMAND} -E env ANDROID_NDK_ROOT=${CMAKE_ANDROID_NDK} PATH=${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin:$ENV{PATH} make install_sw
+            COMMAND ${CMAKE_COMMAND} -E env ANDROID_NDK_ROOT=${CMAKE_ANDROID_NDK} PATH=${OPENSSL_BUILD_ENV_PATH} make install_sw
             WORKING_DIRECTORY ${FETCHCONTENT_BASE_DIR}/openssl-src
             OUTPUT_FILE ${CMAKE_BINARY_DIR}/openssl-install-out
             ERROR_FILE ${CMAKE_BINARY_DIR}/openssl-install-err
+            RESULT_VARIABLE OPENSSL_INSTALL_RESULT
         )
+        if (NOT OPENSSL_INSTALL_RESULT EQUAL 0)
+            message(FATAL_ERROR "OpenSSL install failed, see ${CMAKE_BINARY_DIR}/openssl-install-out and ${CMAKE_BINARY_DIR}/openssl-install-err")
+        endif()
     endif()
 
     add_library(OpenSSL::Crypto STATIC IMPORTED)

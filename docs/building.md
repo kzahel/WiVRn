@@ -117,6 +117,40 @@ and the headless host starts with:
 That is still not an end-to-end stream proof. It is the first concrete macOS
 host-binary checkpoint above the runtime target.
 
+The next branch checkpoint on the reference macOS machine is now beyond
+"waiting for a headset connection":
+
+- the local Android client from the same WiVRn branch now builds on macOS with
+  `./gradlew installDebug`
+- that installs the matching Quest package `org.meumeu.wivrn.local`
+- manual USB-tunneled connection now works with:
+
+```sh
+adb reverse tcp:9757 tcp:9757
+adb shell am start -a android.intent.action.VIEW \
+  -d 'wivrn+tcp://localhost:9757' \
+  org.meumeu.wivrn.local
+```
+
+Two branch-local Android fixes were required to make that client build work on
+macOS:
+
+- `cmake/android/FindOpenSSL.cmake` now discovers the active NDK prebuilt
+  toolchain directory instead of hardcoding `linux-x86_64`
+- that helper now preserves a sane macOS `PATH` and uses a bounded `make -j`
+  level during the Android OpenSSL sub-build
+
+With those fixes in place, the initial WiVRn headset handshake now completes
+successfully against `wivrn-server-headless` on macOS.
+
+The current host-side blockers after that handshake are:
+
+- default macOS headless build:
+  `Failed to find a suitable video encoder`
+- `WIVRN_USE_X264=ON` build:
+  MoltenVK rejects WiVRn's current multi-layer YCbCr compositor image with
+  `VK_ERROR_FEATURE_NOT_PRESENT: Chroma-subsampled formats may only have one array layer`
+
 # Dashboard
 
 The WiVRn dashboard requires Qt6, and the WiVRn server.

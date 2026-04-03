@@ -184,6 +184,68 @@ The key compatibility changes that enabled that checkpoint were:
   - `xdevs` / `xdev_count` reconciled with newer
     `static_xdevs` / `static_xdev_count`
 
+The next checkpoint on April 3, 2026 moves past "headless host waits for a
+connection" and into the first real Quest handshake:
+
+- the local Android client from the same WiVRn branch now builds on macOS and
+  installs as `org.meumeu.wivrn.local`
+- the initial headset handshake now completes successfully over
+  `adb reverse tcp:9757 tcp:9757`
+- after that handshake, the host enters Monado/compositor startup and
+  enumerates the headset as `Meta Quest 3`
+
+Two concrete portability fixes were needed to make the local Android client
+build on macOS:
+
+- `cmake/android/FindOpenSSL.cmake` now discovers the active NDK prebuilt
+  `bin` directory instead of hardcoding `linux-x86_64`
+- that helper now preserves a sane macOS `PATH` and uses a bounded `make -j`
+  level during the Android OpenSSL sub-build
+
+That is enough to get from "protocol mismatch with the store-installed client"
+to "branch-matched client and host complete the first WiVRn handshake on
+macOS."
+
+The current blockers are now encoder/video-path blockers, not transport or
+client-negotiation blockers.
+
+Observed sequence with the default macOS headless build:
+
+- handshake completed
+- Monado compositor started
+- host identified the headset and GPU correctly
+- encoder selection failed with:
+  `Failed to find a suitable video encoder`
+
+That failure matches the current Apple defaults on this branch:
+
+- `WIVRN_USE_NVENC=OFF`
+- `WIVRN_USE_VAAPI=OFF`
+- `WIVRN_USE_VULKAN_ENCODE=OFF`
+- `WIVRN_USE_X264=OFF`
+
+The next probe enabled `WIVRN_USE_X264=ON`, which gets past encoder selection,
+but then fails in the compositor/encoder image path on MoltenVK:
+
+- `VK_ERROR_FEATURE_NOT_PRESENT: vkCreateImage() : Chroma-subsampled formats may only have one array layer`
+- `Headless host failed: vmaCreateImage(...): ErrorFeatureNotPresent`
+
+The relevant current assumption is in `server/driver/wivrn_comp_target.cpp`:
+
+- WiVRn allocates a single `VK_FORMAT_G8_B8R8_2PLANE_420_UNORM` image
+- it uses `arrayLayers = 3` for left, right, and alpha
+
+That layout works for the Linux/Vulkan targets WiVRn was originally built
+around but not on the current Metal/MoltenVK stack, where chroma-subsampled
+images must have only one array layer.
+
+So the current branch status is now:
+
+- branch-matched Quest client handshake on macOS: achieved
+- Monado/compositor startup after handshake: achieved
+- first encoded video on macOS: blocked by current YCbCr array-image layout on
+  MoltenVK, not by protocol setup
+
 ## Monado Patch Inventory
 
 WiVRn depends on a real Monado patch stack. The current macOS Monado fork is:
