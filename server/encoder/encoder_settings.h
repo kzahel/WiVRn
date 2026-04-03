@@ -43,6 +43,7 @@ struct encoder_settings
 	// encoders in the same group are executed in sequence
 	int group = 0;
 	int bit_depth;
+	bool rgba_input = false;
 	std::optional<std::string> device;
 };
 

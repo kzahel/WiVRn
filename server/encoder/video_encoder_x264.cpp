@@ -90,7 +90,8 @@ video_encoder_x264::video_encoder_x264(
         wivrn_vk_bundle & vk,
         const encoder_settings & settings,
         uint8_t stream_idx) :
-        video_encoder(stream_idx, settings, std::make_unique<default_idr_handler>(), false)
+        video_encoder(stream_idx, settings, std::make_unique<default_idr_handler>(), false),
+        rgba_input(settings.rgba_input)
 {
 	if (settings.bit_depth != 8)
 		throw std::runtime_error("x264 encoder only supports 8-bit encoding");
@@ -141,6 +142,20 @@ video_encoder_x264::video_encoder_x264(
 
 	for (auto & i: in)
 	{
+		if (rgba_input)
+		{
+			i.rgba = buffer_allocation(
+			        vk.device,
+			        {
+			                .size = vk::DeviceSize(extent.width * extent.height * 4),
+			                .usage = vk::BufferUsageFlagBits::eTransferDst,
+			        },
+			        {
+			                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+			                .usage = VMA_MEMORY_USAGE_AUTO,
+			        },
+			        "x264 rgba buffer");
+		}
 		i.luma = buffer_allocation(
 		        vk.device,
 		        {
@@ -178,6 +193,27 @@ video_encoder_x264::video_encoder_x264(
 
 std::pair<bool, vk::Semaphore> video_encoder_x264::present_image(vk::Image y_cbcr, bool transferred, vk::raii::CommandBuffer & cmd_buf, uint8_t slot, uint64_t)
 {
+	if (rgba_input)
+	{
+		cmd_buf.copyImageToBuffer(
+		        y_cbcr,
+		        vk::ImageLayout::eTransferSrcOptimal,
+		        in[slot].rgba,
+		        vk::BufferImageCopy{
+		                .bufferRowLength = extent.width,
+		                .imageSubresource = {
+		                        .aspectMask = vk::ImageAspectFlagBits::eColor,
+		                        .baseArrayLayer = stream_idx,
+		                        .layerCount = 1,
+		                },
+		                .imageExtent = {
+		                        .width = extent.width,
+		                        .height = extent.height,
+		                        .depth = 1,
+		                }});
+		return {false, nullptr};
+	}
+
 	cmd_buf.copyImageToBuffer(
 	        y_cbcr,
 	        vk::ImageLayout::eTransferSrcOptimal,
@@ -213,8 +249,60 @@ std::pair<bool, vk::Semaphore> video_encoder_x264::present_image(vk::Image y_cbc
 	return {false, nullptr};
 }
 
+void video_encoder_x264::convert_rgba_to_nv12(uint8_t slot)
+{
+	auto * rgba = static_cast<uint8_t *>(in[slot].rgba.map());
+	auto * y_plane = static_cast<uint8_t *>(in[slot].luma.map());
+	auto * uv_plane = static_cast<uint8_t *>(in[slot].chroma.map());
+
+	for (uint32_t y = 0; y < extent.height; ++y)
+	{
+		for (uint32_t x = 0; x < extent.width; ++x)
+		{
+			const uint8_t * src = rgba + (y * extent.width + x) * 4;
+			int r = src[0];
+			int g = src[1];
+			int b = src[2];
+			int y_value = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
+			y_plane[y * extent.width + x] = std::clamp(y_value, 0, 255);
+		}
+	}
+
+	for (uint32_t y = 0; y < extent.height; y += 2)
+	{
+		for (uint32_t x = 0; x < extent.width; x += 2)
+		{
+			int r_sum = 0;
+			int g_sum = 0;
+			int b_sum = 0;
+			for (uint32_t dy = 0; dy < 2; ++dy)
+			{
+				for (uint32_t dx = 0; dx < 2; ++dx)
+				{
+					const uint8_t * src = rgba + ((y + dy) * extent.width + (x + dx)) * 4;
+					r_sum += src[0];
+					g_sum += src[1];
+					b_sum += src[2];
+				}
+			}
+
+			int r = r_sum / 4;
+			int g = g_sum / 4;
+			int b = b_sum / 4;
+			int u_value = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
+			int v_value = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
+			size_t uv_index = (y / 2) * extent.width + x;
+			uv_plane[uv_index + 0] = std::clamp(u_value, 0, 255);
+			uv_plane[uv_index + 1] = std::clamp(v_value, 0, 255);
+		}
+	}
+}
+
 std::optional<video_encoder::data> video_encoder_x264::encode(uint8_t slot, uint64_t frame_index)
 {
+	if (rgba_input)
+		convert_rgba_to_nv12(slot);
+
 	bool reconfigure = false;
 	if (auto framerate = pending_framerate.exchange(0))
 	{

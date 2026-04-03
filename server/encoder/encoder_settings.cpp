@@ -44,6 +44,21 @@ namespace wivrn
 
 static const double passthrough_bitrate_factor = 0.05;
 
+namespace
+{
+bool uses_two_layer_apple_software_path(const std::array<wivrn::encoder_settings, 3> & encoders)
+{
+#if defined(__APPLE__)
+	return std::ranges::all_of(encoders, [](const auto & encoder) {
+		return encoder.encoder_name == encoder_x264;
+	});
+#else
+	(void)encoders;
+	return false;
+#endif
+}
+} // namespace
+
 static void split_bitrate(std::array<wivrn::encoder_settings, 3> & encoders, uint64_t bitrate)
 {
 	double total_weight = 0;
@@ -335,6 +350,7 @@ std::array<encoder_settings, 3> get_encoder_settings(wivrn_vk_bundle & bundle, c
 		bit_depth = 10;
 
 	auto check_format = [&](vk::Format format) {
+		auto required_layers = uses_two_layer_apple_software_path(res) ? 2u : 3u;
 		try
 		{
 			auto props = bundle.physical_device.getImageFormatProperties(
@@ -342,7 +358,7 @@ std::array<encoder_settings, 3> get_encoder_settings(wivrn_vk_bundle & bundle, c
 			        vk::ImageType::e2D,
 			        vk::ImageTiling::eOptimal,
 			        vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc);
-			return props.maxArrayLayers >= 3 and
+			return props.maxArrayLayers >= required_layers and
 			       props.maxExtent.depth >= 1 and
 			       props.maxExtent.width >= width and
 			       props.maxExtent.height >= height;
@@ -400,6 +416,10 @@ std::array<encoder_settings, 3> get_encoder_settings(wivrn_vk_bundle & bundle, c
 
 	for (auto & i: res)
 		i.bit_depth = bit_depth.value_or(10);
+
+	bool apple_rgba_input = uses_two_layer_apple_software_path(res);
+	for (auto & encoder: res)
+		encoder.rgba_input = apple_rgba_input;
 
 	split_bitrate(res, settings.bitrate_bps);
 	return res;

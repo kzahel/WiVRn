@@ -146,13 +146,69 @@ macOS:
 With those fixes in place, the initial WiVRn headset handshake now completes
 successfully against `wivrn-server-headless` on macOS.
 
-The current host-side blockers after that handshake are:
+The current Apple bring-up path then needs `x264` enabled explicitly:
 
-- default macOS headless build:
-  `Failed to find a suitable video encoder`
-- `WIVRN_USE_X264=ON` build:
-  MoltenVK rejects WiVRn's current multi-layer YCbCr compositor image with
-  `VK_ERROR_FEATURE_NOT_PRESENT: Chroma-subsampled formats may only have one array layer`
+```sh
+cmake -S . -B build-macos-host -GNinja \
+  -DWIVRN_BUILD_SERVER=ON \
+  -DWIVRN_BUILD_SERVER_LIBRARY=ON \
+  -DWIVRN_MONADO_SOURCE_DIR=/Users/kgraehl/code/monado \
+  -DWIVRN_FEATURE_SOLARXR=OFF \
+  -DWIVRN_FEATURE_STEAMVR_LIGHTHOUSE=OFF \
+  -DWIVRN_USE_AVAHI=OFF \
+  -DWIVRN_USE_DBUS_CONTROL=OFF \
+  -DWIVRN_USE_LIBNOTIFY=OFF \
+  -DWIVRN_USE_UINPUT=OFF \
+  -DWIVRN_USE_APPLICATIONS=OFF \
+  -DWIVRN_USE_PIPEWIRE=OFF \
+  -DWIVRN_USE_PULSEAUDIO=OFF \
+  -DWIVRN_USE_X264=ON
+
+ninja -C build-macos-host wivrn-server-headless openxr_wivrn
+```
+
+On the current branch, the old MoltenVK blocker from the layered YCbCr target
+is now cleared by a temporary Apple software-encode compatibility path:
+
+- Apple x264 uses a layered `VK_FORMAT_R8G8B8A8_SRGB` compositor target
+- `video_encoder_x264` converts `RGBA -> NV12` on the CPU before encode
+- the Apple path currently disables WiVRn's third alpha stream
+
+That is enough to move the port to a real runtime checkpoint. On the reference
+macOS machine, this now works:
+
+```sh
+build-macos-host/server/wivrn-server-headless --no-encrypt
+```
+
+with the branch-matched Quest client tunneled over USB:
+
+```sh
+adb reverse tcp:9757 tcp:9757
+adb shell am start -a android.intent.action.VIEW \
+  -d 'wivrn+tcp://localhost:9757' \
+  org.meumeu.wivrn.local
+```
+
+and the WiVRn-derived OpenXR runtime can now drive a real macOS app:
+
+```sh
+MONADO_OPENXR_RUNTIME_PATH=build-macos-host/_deps/monado-build/src/xrt/targets/openxr/libopenxr_wivrn.dylib \
+  /tmp/monado-macos-kg/tests/tests_macos_openxr_vulkan_probe
+```
+
+In the latest validation run, that probe submitted 60 projection frames
+successfully and the Quest client reached decoder startup with:
+
+- `Mediacodec format changed`
+- `decoded image size: 1088x1088`
+- `Stream scene ready`
+
+The next blockers are no longer handshake or `vkCreateImage` bring-up. They
+are:
+
+- stream continuity and visible in-headset confirmation on the Apple x264 path
+- restoring the third alpha stream on an Apple-friendly pre-encode layout
 
 # Dashboard
 

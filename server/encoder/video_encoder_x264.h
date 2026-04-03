@@ -37,10 +37,12 @@ class video_encoder_x264 : public video_encoder
 	bool control;
 
 	x264_picture_t pic_out = {};
+	bool rgba_input = false;
 
 	struct in_t
 	{
 		x264_picture_t pic;
+		buffer_allocation rgba;
 		buffer_allocation luma;
 		buffer_allocation chroma;
 	};
@@ -74,6 +76,7 @@ private:
 	void ProcessNal(pending_nal && nal);
 
 	void InsertInPendingNal(pending_nal && nal);
+	void convert_rgba_to_nv12(uint8_t slot);
 };
 
 } // namespace wivrn

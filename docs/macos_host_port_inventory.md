@@ -225,7 +225,7 @@ That failure matches the current Apple defaults on this branch:
 - `WIVRN_USE_X264=OFF`
 
 The next probe enabled `WIVRN_USE_X264=ON`, which gets past encoder selection,
-but then fails in the compositor/encoder image path on MoltenVK:
+but initially still failed in the compositor/encoder image path on MoltenVK:
 
 - `VK_ERROR_FEATURE_NOT_PRESENT: vkCreateImage() : Chroma-subsampled formats may only have one array layer`
 - `Headless host failed: vmaCreateImage(...): ErrorFeatureNotPresent`
@@ -239,12 +239,46 @@ That layout works for the Linux/Vulkan targets WiVRn was originally built
 around but not on the current Metal/MoltenVK stack, where chroma-subsampled
 images must have only one array layer.
 
-So the current branch status is now:
+That old blocker is now cleared on the branch with a temporary Apple software
+encode compatibility path:
+
+- Apple x264 now renders into a layered `VK_FORMAT_R8G8B8A8_SRGB` compositor
+  target instead of the old subsampled array image
+- `video_encoder_x264` reads back per-eye RGBA and converts `RGBA -> NV12` on
+  the CPU before encode
+- this temporary Apple path disables the third alpha stream for now
+
+That is not the final architecture, but it is enough to move the port from
+"handshake works but video bring-up dies in `vkCreateImage`" to a real runtime
+checkpoint.
+
+As of the April 3, 2026 validation run on the reference machine:
 
 - branch-matched Quest client handshake on macOS: achieved
 - Monado/compositor startup after handshake: achieved
-- first encoded video on macOS: blocked by current YCbCr array-image layout on
-  MoltenVK, not by protocol setup
+- `openxr_wivrn` now builds on macOS alongside the headless host
+- a real macOS OpenXR app now runs through the WiVRn-derived runtime:
+  `tests_macos_openxr_vulkan_probe` connected through `libopenxr_wivrn.dylib`
+  and submitted 60 projection frames successfully
+- the Quest client now reaches decoder startup and logs:
+  - `Mediacodec format changed`
+  - `decoded image size: 1088x1088`
+  - `Stream scene ready`
+
+So the current branch status is now:
+
+- protocol negotiation: working
+- macOS host/compositor startup: working
+- first encoded video path: partially working on the temporary Apple x264 path
+- remaining blocker: stream continuity and visible in-headset confirmation, not
+  `vkCreateImage` bring-up
+
+Two important caveats remain:
+
+- Apple alpha passthrough is still disabled on this temporary path and must be
+  restored before the real MVP is complete
+- Quest logs still showed missing-shard warnings during the first long run, so
+  frame delivery stability is not yet proven
 
 ## Monado Patch Inventory
 
@@ -376,8 +410,14 @@ The branch now handles the easy session drift pieces:
   `static_xdevs` / `static_xdev_count`
 
 That gets the headless host binary built and running. The next meaningful work
-is no longer compile-only reconciliation; it is first client handshake and then
-real stream bring-up.
+is now no longer compile-only reconciliation or first handshake bring-up. It
+is:
+
+- instrumenting host-side frame and shard delivery on the Apple path
+- doing short in-headset confirmation that the WiVRn macOS stream is actually
+  visible and motion-correct
+- then redesigning the Apple pre-encode path so alpha can return as a separate
+  third stream instead of staying disabled behind the temporary x264 shim
 
 #### `0006-d-steamvr_lh-prevent-crash-on-vive-pro2-WiVRn.patch`
 

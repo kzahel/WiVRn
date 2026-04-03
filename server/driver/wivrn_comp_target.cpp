@@ -46,6 +46,19 @@
 
 namespace wivrn
 {
+namespace
+{
+bool uses_two_layer_apple_software_path(const std::array<encoder_settings, 3> & settings)
+{
+#if defined(__APPLE__)
+	return settings[0].rgba_input;
+#else
+	(void)settings;
+	return false;
+#endif
+}
+} // namespace
+
 std::vector<const char *> wivrn_comp_target::wanted_instance_extensions = {};
 std::vector<const char *> wivrn_comp_target::wanted_device_extensions = {
 // For FFMPEG
@@ -147,12 +160,13 @@ VkResult wivrn_comp_target::create_images_impl(vk::ImageUsageFlags flags)
 	destroy_images();
 
 	auto format = vk::Format(this->format);
+	bool rgba_target = settings[0].rgba_input;
 
 	bool is_10bit = format == vk::Format::eG10X6B10X6R10X62Plane420Unorm3Pack16;
 
 	std::array formats = {
-	        is_10bit ? vk::Format::eR16Unorm : vk::Format::eR8Unorm,
-	        is_10bit ? vk::Format::eR16G16Unorm : vk::Format::eR8G8Unorm,
+	        rgba_target ? format : (is_10bit ? vk::Format::eR16Unorm : vk::Format::eR8Unorm),
+	        rgba_target ? format : (is_10bit ? vk::Format::eR16G16Unorm : vk::Format::eR8G8Unorm),
 	        format};
 
 	images = U_TYPED_ARRAY_CALLOC(comp_target_image, image_count);
@@ -168,7 +182,7 @@ VkResult wivrn_comp_target::create_images_impl(vk::ImageUsageFlags flags)
 	                        .depth = 1,
 	                },
 	                .mipLevels = 1,
-	                .arrayLayers = 3, // left, right then alpha
+	                .arrayLayers = image_array_layers,
 	                .samples = vk::SampleCountFlagBits::e1,
 	                .tiling = vk::ImageTiling::eOptimal,
 	                .usage = flags | vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc,
@@ -217,27 +231,31 @@ VkResult wivrn_comp_target::create_images_impl(vk::ImageUsageFlags flags)
 		                                                .viewType = vk::ImageViewType::e2DArray,
 		                                                .format = formats[0],
 		                                                .subresourceRange = {
-		                                                        .aspectMask = vk::ImageAspectFlagBits::ePlane0,
+		                                                        .aspectMask = rgba_target ? vk::ImageAspectFlagBits::eColor : vk::ImageAspectFlagBits::ePlane0,
 		                                                        .levelCount = 1,
 		                                                        .layerCount = vk::RemainingArrayLayers,
 		                                                },
 		                                        });
-		item.image_view_cbcr = vk::raii::ImageView(device,
-		                                           {
-		                                                   .pNext = &usage,
-		                                                   .image = item.image,
-		                                                   .viewType = vk::ImageViewType::e2DArray,
-		                                                   .format = formats[1],
-		                                                   .subresourceRange = {
-		                                                           .aspectMask = vk::ImageAspectFlagBits::ePlane1,
-		                                                           .levelCount = 1,
-		                                                           .layerCount = vk::RemainingArrayLayers,
-		                                                   },
-		                                           });
+		if (!rgba_target)
+		{
+			item.image_view_cbcr = vk::raii::ImageView(device,
+			                                           {
+			                                                   .pNext = &usage,
+			                                                   .image = item.image,
+			                                                   .viewType = vk::ImageViewType::e2DArray,
+			                                                   .format = formats[1],
+			                                                   .subresourceRange = {
+			                                                           .aspectMask = vk::ImageAspectFlagBits::ePlane1,
+			                                                           .levelCount = 1,
+			                                                           .layerCount = vk::RemainingArrayLayers,
+			                                                   },
+			                                           });
+		}
 		images[i].view = VkImageView(*item.image_view_y);
-		images[i].view_cbcr = VkImageView(*item.image_view_cbcr);
+		images[i].view_cbcr = rgba_target ? VK_NULL_HANDLE : VkImageView(*item.image_view_cbcr);
 		wivrn_bundle->name(item.image_view_y, "comp target image view (y)");
-		wivrn_bundle->name(item.image_view_cbcr, "comp target image view (CbCr)");
+		if (!rgba_target)
+			wivrn_bundle->name(item.image_view_cbcr, "comp target image view (CbCr)");
 	}
 
 	psc.fence = vk::raii::Fence(device, vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
@@ -344,6 +362,10 @@ bool wivrn_comp_target::init_post_vulkan(uint32_t preferred_width, uint32_t pref
 		        *wivrn_bundle,
 		        cnx.get_info(),
 		        *cnx.get_settings());
+		supports_alpha_stream = not uses_two_layer_apple_software_path(settings);
+		image_array_layers = supports_alpha_stream ? 3u : 2u;
+		if (not supports_alpha_stream)
+			U_LOG_W("Using Apple software-encode compatibility path: alpha stream disabled until a separate Apple-friendly alpha layout exists");
 		print_encoders(settings);
 
 		c->settings.preferred.width = settings[0].width;
@@ -383,7 +405,9 @@ void wivrn_comp_target::create_images(const comp_target_create_images_info * cre
 	init_semaphores();
 
 	// will fail on encoder init if bit_depth is arbitrary garbage
-	if (settings[0].bit_depth == 10)
+	if (settings[0].rgba_input)
+		format = VK_FORMAT_R8G8B8A8_SRGB;
+	else if (settings[0].bit_depth == 10)
 		format = VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
 	else
 		format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
@@ -534,7 +558,8 @@ VkResult wivrn_comp_target::present(
 	wivrn_bundle->device.resetFences(*psc.fence);
 	psc_image.status = pseudo_swapchain::status_t::encoding;
 	auto info = pacer.present_to_info(desired_present_time_ns);
-	const bool do_alpha = c->base.layer_accum.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND;
+	const bool requested_alpha = c->base.layer_accum.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND;
+	const bool do_alpha = supports_alpha_stream and requested_alpha;
 
 	bool need_queue_transfer = false;
 	std::vector<vk::Semaphore> present_done_sem;

@@ -90,6 +90,8 @@ class wivrn_comp_target : public comp_target
 	pseudo_swapchain psc;
 
 	VkColorSpaceKHR color_space;
+	uint32_t image_array_layers = 3;
+	bool supports_alpha_stream = true;
 
 	std::array<encoder_settings, 3> settings;
 	std::list<std::jthread> encoder_threads;
