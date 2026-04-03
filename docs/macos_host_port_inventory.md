@@ -136,6 +136,19 @@ As of the April 3, 2026 configure probe on the reference macOS machine, these re
 
 That is useful progress: the next blocker is now a real dependency strategy question rather than another hidden Linux runtime coupling.
 
+The branch now also supports `WIVRN_MONADO_SOURCE_DIR` for macOS work. That lets the host-port branch point directly at the active local macOS Monado fork instead of cloning upstream Monado and applying the full WiVRn Monado patch stack during configure. This is the correct near-term path for the Mac port because the goal is to converge WiVRn's Monado requirements onto the existing macOS fork, not to mutate that fork through FetchContent patching.
+
+The next configure blocker after that override was the SteamVR Lighthouse Monado driver being enabled by default. The branch now defaults both `WIVRN_FEATURE_STEAMVR_LIGHTHOUSE` and `WIVRN_FEATURE_SOLARXR` to `OFF` on macOS so the first Apple host milestone does not request Linux-only optional tracking drivers from Monado.
+
+The next blocker after that was a packaging/runtime-target assumption in `server/CMakeLists.txt`: WiVRn expected the embedded Monado tree to expose a `monado` target for `libmonado`, but the active macOS Monado fork only provides the OpenXR runtime target in this configuration. The branch now treats `libmonado` as optional when generating the runtime manifest and install target list. That is the correct direction for macOS because the first host milestone only needs the runtime target to exist.
+
+With those fixes in place, the minimal macOS host probe now reaches a real build:
+
+- configure succeeds with `WIVRN_MONADO_SOURCE_DIR=/Users/kgraehl/code/monado`
+- `ninja -C build-macos-host openxr_wivrn` succeeds
+
+That is the first concrete "WiVRn-derived server builds on macOS" checkpoint, even though it is still only the runtime-library slice and not the full desktop shell.
+
 ## Monado Patch Inventory
 
 WiVRn depends on a real Monado patch stack. The current macOS Monado fork is:

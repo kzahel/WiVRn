@@ -27,11 +27,14 @@ option(WIVRN_USE_SYSTEM_FREETYPE "Use system FreeType" ON)
 option(WIVRN_USE_SYSTEM_BOOST "Use system Boost headers" ON)
 option(WIVRN_USE_SYSTEM_OPENXR "Use system OpenXR headers" ON)
 option(WIVRN_USE_SYSTEM_LIBKTX "Use system KTX-Software library" ON)
+set(WIVRN_MONADO_SOURCE_DIR "" CACHE PATH "Use a local Monado source tree instead of fetching and patching upstream Monado")
 
 if(APPLE)
     set(WIVRN_DEFAULT_LINUX_HOST_INTEGRATIONS OFF)
+    set(WIVRN_DEFAULT_LINUX_TRACKING_DRIVERS OFF)
 else()
     set(WIVRN_DEFAULT_LINUX_HOST_INTEGRATIONS ON)
+    set(WIVRN_DEFAULT_LINUX_TRACKING_DRIVERS ON)
 endif()
 
 option(WIVRN_USE_SYSTEMD "Use libsystemd" ${WIVRN_DEFAULT_LINUX_HOST_INTEGRATIONS})
@@ -71,8 +74,8 @@ set(OVR_COMPAT_SEARCH_PATH "/opt/xrizer:/usr/local/lib/OpenComposite:/usr/lib/Op
 
 option(WIVRN_FEATURE_DEBUG_GUI "Enable Monado debug GUI" OFF)
 option(WIVRN_FEATURE_RENDERDOC "Support renderdoc" OFF)
-option(WIVRN_FEATURE_SOLARXR "Enable SolarXR driver" ON)
-option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" ON)
+option(WIVRN_FEATURE_SOLARXR "Enable SolarXR driver" ${WIVRN_DEFAULT_LINUX_TRACKING_DRIVERS})
+option(WIVRN_FEATURE_STEAMVR_LIGHTHOUSE "Enable SteamVR Lighthouse driver" ${WIVRN_DEFAULT_LINUX_TRACKING_DRIVERS})
 
 set(WIVRN_CSS "${CMAKE_SOURCE_DIR}/images/wivrn-local.css" CACHE STRING "Stylesheet to use to render SVGs" )
 
@@ -299,13 +302,25 @@ file(GLOB MONADO_PATCHES CONFIGURE_DEPENDS patches/monado/*)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS monado-rev)
 file(STRINGS monado-rev MONADO_REV)
 # Server dependencies
-FetchContent_Declare(monado
-    GIT_REPOSITORY   https://gitlab.freedesktop.org/monado/monado.git
-    # The flatpak manifest is updated automatically
-    GIT_TAG          ${MONADO_REV}
-    PATCH_COMMAND    ${CMAKE_CURRENT_LIST_DIR}/patches/apply.sh ${MONADO_PATCHES}
-    EXCLUDE_FROM_ALL
-)
+if (WIVRN_MONADO_SOURCE_DIR)
+    if (NOT EXISTS "${WIVRN_MONADO_SOURCE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "WIVRN_MONADO_SOURCE_DIR does not point to a Monado source tree: ${WIVRN_MONADO_SOURCE_DIR}")
+    endif()
+
+    message(STATUS "Using local Monado source tree: ${WIVRN_MONADO_SOURCE_DIR}")
+    FetchContent_Declare(monado
+        SOURCE_DIR       ${WIVRN_MONADO_SOURCE_DIR}
+        EXCLUDE_FROM_ALL
+    )
+else()
+    FetchContent_Declare(monado
+        GIT_REPOSITORY   https://gitlab.freedesktop.org/monado/monado.git
+        # The flatpak manifest is updated automatically
+        GIT_TAG          ${MONADO_REV}
+        PATCH_COMMAND    ${CMAKE_CURRENT_LIST_DIR}/patches/apply.sh ${MONADO_PATCHES}
+        EXCLUDE_FROM_ALL
+    )
+endif()
 
 add_custom_target(wivrn-version ALL
     COMMAND ${CMAKE_COMMAND}

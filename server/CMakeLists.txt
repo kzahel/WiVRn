@@ -266,7 +266,6 @@ endif()
 
 if (WIVRN_BUILD_SERVER_LIBRARY)
 	set_target_properties(${RUNTIME_TARGET} PROPERTIES EXCLUDE_FROM_ALL FALSE)
-	set_target_properties(monado PROPERTIES EXCLUDE_FROM_ALL FALSE)
 
 	set(_extra_args)
 	if (WIVRN_OPENXR_MANIFEST_TYPE STREQUAL "absolute")
@@ -275,9 +274,15 @@ if (WIVRN_BUILD_SERVER_LIBRARY)
 		set(_extra_args RUNTIME_DIR_RELATIVE_TO_MANIFEST ../../../${CMAKE_INSTALL_LIBDIR}/wivrn)
 	endif()
 
-	set_target_properties(monado PROPERTIES OUTPUT_NAME "monado_wivrn")
-	# Workaround as generate_openxr_runtime_manifest_at_install uses target name as library path
-	add_library(monado_wivrn ALIAS monado)
+	set(_runtime_install_targets ${RUNTIME_TARGET})
+	if (TARGET monado)
+		set_target_properties(monado PROPERTIES EXCLUDE_FROM_ALL FALSE)
+		set_target_properties(monado PROPERTIES OUTPUT_NAME "monado_wivrn")
+		# Workaround as generate_openxr_runtime_manifest_at_install uses target name as library path
+		add_library(monado_wivrn ALIAS monado)
+		list(APPEND _extra_args LIBMONADO monado_wivrn)
+		list(APPEND _runtime_install_targets monado)
+	endif()
 
 	if (WIVRN_OPENXR_MANIFEST_ABI)
 		if (CMAKE_C_COMPILER_ARCHITECTURE_ID MATCHES "i.86")
@@ -294,11 +299,10 @@ if (WIVRN_BUILD_SERVER_LIBRARY)
 		RUNTIME_TARGET ${RUNTIME_TARGET}
 		DESTINATION share/openxr/1
 		RELATIVE_RUNTIME_DIR ${CMAKE_INSTALL_LIBDIR}/wivrn
-		LIBMONADO monado_wivrn
 		OUT_FILENAME ${_filename}
 		)
 
-	install(TARGETS ${RUNTIME_TARGET} monado
+	install(TARGETS ${_runtime_install_targets}
 		LIBRARY
 		DESTINATION ${CMAKE_INSTALL_LIBDIR}/wivrn
 		COMPONENT Runtime)

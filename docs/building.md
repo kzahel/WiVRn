@@ -55,6 +55,9 @@ A minimal macOS runtime-library configure probe currently looks like:
 cmake -S . -B build-macos-host -GNinja \
   -DWIVRN_BUILD_SERVER=ON \
   -DWIVRN_BUILD_SERVER_LIBRARY=ON \
+  -DWIVRN_MONADO_SOURCE_DIR=/Users/kgraehl/code/monado \
+  -DWIVRN_FEATURE_SOLARXR=OFF \
+  -DWIVRN_FEATURE_STEAMVR_LIGHTHOUSE=OFF \
   -DWIVRN_USE_AVAHI=OFF \
   -DWIVRN_USE_DBUS_CONTROL=OFF \
   -DWIVRN_USE_LIBNOTIFY=OFF \
@@ -68,6 +71,18 @@ On this branch, that probe now gets past the Linux desktop-shell and application
 
 - `WIVRN_USE_SYSTEM_BOOST=ON`: requires a system Boost installation with `locale`, `url`, and `iostreams`
 - `WIVRN_USE_SYSTEM_BOOST=OFF`: uses `FetchContent` to download Boost 1.89.0 from GitHub
+
+For macOS host-port work, `WIVRN_MONADO_SOURCE_DIR` is now the preferred path. It allows the branch to use the active local macOS Monado fork directly instead of cloning upstream Monado and applying the Linux-oriented WiVRn patch stack during configure. When this override is used, the caller is responsible for pointing it at a compatible Monado tree.
+
+On this branch, `WIVRN_FEATURE_SOLARXR` and `WIVRN_FEATURE_STEAMVR_LIGHTHOUSE` now also default to `OFF` on macOS because the first Apple host milestone should not request Linux-only Monado drivers by default.
+
+On the reference macOS machine, that configure probe now succeeds against `/Users/kgraehl/code/monado`, and the first runtime target build also succeeds with:
+
+```sh
+ninja -C build-macos-host openxr_wivrn
+```
+
+That does not mean the full WiVRn host is working on macOS yet. It means the branch has now reached a real buildable OpenXR runtime target on top of the local macOS Monado fork, which is the first meaningful host-port checkpoint.
 
 # Dashboard
 
