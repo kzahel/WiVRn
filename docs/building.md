@@ -218,6 +218,15 @@ the evidence. The remaining Apple x264 issue is narrower:
 
 - Quest decoder bring-up succeeds and reaches `Stream scene ready`
 - left/right color encode is alive on macOS
+- direct probe readback shows the app's own swapchain image contains nonzero
+  pixels before `xrEndFrame`
+- the Apple x264 path still sees all-zero RGBA after submission
+- that same black result reproduces for both projection-layer and quad-layer
+  submission
+
+So the current blocker is now after app rendering and before Apple encode:
+submitted app layers are turning black somewhere in the Monado/WiVRn compositor
+path on macOS.
 - there is still at least one early startup-side right-eye frame drop during
   decoder transition, and visible in-headset confirmation is still pending
 

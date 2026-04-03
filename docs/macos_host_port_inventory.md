@@ -239,6 +239,22 @@ That layout works for the Linux/Vulkan targets WiVRn was originally built
 around but not on the current Metal/MoltenVK stack, where chroma-subsampled
 images must have only one array layer.
 
+The next Apple compatibility checkpoint moved past that MoltenVK failure and
+isolated the current black-image bug more precisely:
+
+- the temporary Apple x264 path now logs completed frames for both color
+  streams, so encode itself is alive
+- direct readback in the macOS OpenXR probe shows that the app's own swapchain
+  image contains nonzero pixels before `xrEndFrame`
+- the WiVRn Apple x264 path still sees all-zero RGBA after the app submits the
+  layer
+- the same black result reproduces for both projection-layer submission and a
+  simple quad-layer diagnostic
+
+That means the current blocker is no longer "the app rendered black" or
+"x264/Quest decode turned it black." The failure is in the submitted-layer path
+between OpenXR frame submission and the WiVRn compositor target on macOS.
+
 That old blocker is now cleared on the branch with a temporary Apple software
 encode compatibility path:
 

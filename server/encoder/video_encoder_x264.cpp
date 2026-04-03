@@ -297,6 +297,41 @@ void video_encoder_x264::convert_rgba_to_nv12(uint8_t slot)
 			uv_plane[uv_index + 1] = std::clamp(v_value, 0, 255);
 		}
 	}
+
+	++rgba_debug_log_count;
+	if (rgba_debug_log_count <= 5 || rgba_debug_log_count % 120 == 0)
+	{
+		const size_t center_index = ((extent.height / 2) * extent.width + (extent.width / 2)) * 4;
+		const size_t center_y_index = (extent.height / 2) * extent.width + (extent.width / 2);
+		const size_t center_uv_index = (extent.height / 4) * extent.width + (extent.width / 2 & ~1u);
+		uint32_t sampled_luma_sum = 0;
+		uint32_t sampled_luma_count = 0;
+		for (uint32_t sample_y = 0; sample_y < extent.height; sample_y += std::max(1u, extent.height / 4))
+		{
+			for (uint32_t sample_x = 0; sample_x < extent.width; sample_x += std::max(1u, extent.width / 4))
+			{
+				sampled_luma_sum += y_plane[sample_y * extent.width + sample_x];
+				++sampled_luma_count;
+			}
+		}
+
+		fprintf(stderr,
+		        "apple-rgba stream=%u rgba0=(%u,%u,%u,%u) rgbaC=(%u,%u,%u,%u) y0=%u yC=%u uvC=(%u,%u) yAvg=%u\n",
+		        unsigned(stream_idx),
+		        unsigned(rgba[0]),
+		        unsigned(rgba[1]),
+		        unsigned(rgba[2]),
+		        unsigned(rgba[3]),
+		        unsigned(rgba[center_index + 0]),
+		        unsigned(rgba[center_index + 1]),
+		        unsigned(rgba[center_index + 2]),
+		        unsigned(rgba[center_index + 3]),
+		        unsigned(y_plane[0]),
+		        unsigned(y_plane[center_y_index]),
+		        unsigned(uv_plane[center_uv_index + 0]),
+		        unsigned(uv_plane[center_uv_index + 1]),
+		        sampled_luma_count == 0 ? 0u : sampled_luma_sum / sampled_luma_count);
+	}
 }
 
 std::optional<video_encoder::data> video_encoder_x264::encode(uint8_t slot, uint64_t frame_index)
