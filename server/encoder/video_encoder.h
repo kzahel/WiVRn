@@ -102,6 +102,7 @@ private:
 	std::ofstream video_dump;
 
 	std::shared_ptr<sender> shared_sender;
+	uint64_t completed_send_logs = 0;
 
 protected:
 	std::atomic_uint32_t pending_bitrate;

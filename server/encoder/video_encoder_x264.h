@@ -60,6 +60,7 @@ class video_encoder_x264 : public video_encoder
 	int next_mb;
 	int num_mb; // Number of macroblocks in a frame
 	std::list<pending_nal> pending_nals;
+	uint64_t encode_log_count = 0;
 
 public:
 	video_encoder_x264(wivrn_vk_bundle & vk, const encoder_settings & settings, uint8_t stream_idx);

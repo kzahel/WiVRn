@@ -113,6 +113,7 @@ class wivrn_session : public xrt_system_devices
 
 	std::mutex csv_mutex;
 	std::ofstream feedback_csv;
+	std::array<uint64_t, 3> feedback_log_counts = {};
 
 	std::unique_ptr<audio_device> audio_handle;
 

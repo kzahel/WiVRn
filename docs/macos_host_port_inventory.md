@@ -265,20 +265,43 @@ As of the April 3, 2026 validation run on the reference machine:
   - `decoded image size: 1088x1088`
   - `Stream scene ready`
 
+One more macOS-specific runtime bug then showed up:
+
+- the Apple IPC service socket could be opened by the running host process but
+  disappeared from the filesystem path the WiVRn OpenXR runtime expects
+- `libopenxr_wivrn.dylib` then failed with
+  `XR_ERROR_RUNTIME_UNAVAILABLE` because `/Users/.../monado/wivrn/comp_ipc`
+  was missing
+
+The current local workaround in the macOS Monado fork preserves the Apple IPC
+socket path during this port spike instead of unlinking it during teardown.
+With that workaround in place:
+
+- the socket path stays visible on disk during host runtime
+- `tests_macos_openxr_vulkan_probe` once again connects through
+  `libopenxr_wivrn.dylib` and submits 120 projection frames successfully
+- the Quest client again reaches decoder startup and `Stream scene ready`
+- the host now also logs completed Apple x264 frames for streams `0` and `1`
+  with `next_mb == num_mb`
+- the current client-side startup warning is now narrowed to:
+  - `stream 1 frame 6 was not sent because no shard was received`
+
 So the current branch status is now:
 
 - protocol negotiation: working
 - macOS host/compositor startup: working
 - first encoded video path: partially working on the temporary Apple x264 path
-- remaining blocker: stream continuity and visible in-headset confirmation, not
-  `vkCreateImage` bring-up
+- remaining blocker: startup-side stream continuity and visible in-headset
+  confirmation, not `vkCreateImage` bring-up
+- local Apple workaround: preserve the IPC socket pathname so the runtime can
+  actually reconnect to the live headless host
 
 Two important caveats remain:
 
 - Apple alpha passthrough is still disabled on this temporary path and must be
   restored before the real MVP is complete
-- Quest logs still showed missing-shard warnings during the first long run, so
-  frame delivery stability is not yet proven
+- Quest logs still showed early missing-shard warnings during live probe runs,
+  so frame delivery stability is not yet fully proven
 
 ## Monado Patch Inventory
 

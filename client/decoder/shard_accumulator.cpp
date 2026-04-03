@@ -82,7 +82,10 @@ static void debug_why_not_sent(const shard_set & shards)
 	const auto & frame = shards.data;
 	if (frame.empty())
 	{
-		spdlog::info("frame {} was not sent because no shard was received", shards.frame_index());
+		spdlog::info(
+		        "stream {} frame {} was not sent because no shard was received",
+		        shards.feedback.stream_index,
+		        shards.frame_index());
 		return;
 	}
 	int frame_idx = -1;
@@ -100,7 +103,13 @@ static void debug_why_not_sent(const shard_set & shards)
 	}
 
 	bool end = frame.back() and frame.back()->timing_info;
-	spdlog::info("frame {} was not sent with {} data shards, {}{} missing", frame_idx, data, end ? "" : "at least ", missing);
+	spdlog::info(
+	        "stream {} frame {} was not sent with {} data shards, {}{} missing",
+	        shards.feedback.stream_index,
+	        frame_idx,
+	        data,
+	        end ? "" : "at least ",
+	        missing);
 }
 
 void shard_accumulator::advance()

@@ -774,6 +774,24 @@ void wivrn_session::operator()(from_headset::feedback && feedback)
 		dump_time("blit", feedback.frame_index, o.from_headset(feedback.blitted), feedback.stream_index);
 	if (feedback.displayed)
 		dump_time("display", feedback.frame_index, o.from_headset(feedback.displayed), feedback.stream_index);
+
+	if (feedback.stream_index < feedback_log_counts.size())
+	{
+		auto &count = feedback_log_counts[feedback.stream_index];
+		++count;
+		if ((count <= 5 || count % 60 == 0) && feedback.stream_index == 0)
+		{
+			U_LOG_I(
+			        "feedback frame %llu stream %u recv=%d decode=%d blit=%d display=%d feedback_count=%llu",
+			        (unsigned long long)feedback.frame_index,
+			        feedback.stream_index,
+			        bool(feedback.received_last_packet),
+			        bool(feedback.received_from_decoder),
+			        bool(feedback.blitted),
+			        bool(feedback.displayed),
+			        (unsigned long long)count);
+		}
+	}
 }
 
 void wivrn_session::operator()(from_headset::battery && battery)

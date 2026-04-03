@@ -24,6 +24,7 @@
 #include "util/u_logging.h"
 #include "utils/wivrn_vk_bundle.h"
 
+#include <cstdio>
 #include <stdexcept>
 
 namespace wivrn
@@ -342,6 +343,20 @@ std::optional<video_encoder::data> video_encoder_x264::encode(uint8_t slot, uint
 	next_mb = 0;
 	assert(pending_nals.empty());
 	int size = x264_encoder_encode(enc, &nal, &num_nal, &pic, &pic_out);
+	++encode_log_count;
+	if (encode_log_count <= 5 || encode_log_count % 60 == 0)
+	{
+		fprintf(stderr,
+		        "x264 stream=%u frame=%llu size=%d nals=%d next_mb=%d num_mb=%d pending=%zu control=%d\n",
+		        unsigned(stream_idx),
+		        (unsigned long long)frame_index,
+		        size,
+		        num_nal,
+		        next_mb,
+		        num_mb,
+		        pending_nals.size(),
+		        int(control));
+	}
 	if (next_mb != num_mb)
 	{
 		U_LOG_W("unexpected macroblock count: %d", next_mb);

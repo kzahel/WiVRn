@@ -24,6 +24,7 @@
 
 #include "encoder_settings.h"
 #include "os/os_time.h"
+#include "util/u_logging.h"
 #include "wivrn_config.h"
 
 #include <string>
@@ -300,6 +301,9 @@ void video_encoder::encode(wivrn_session & cnx,
 void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool control)
 {
 	std::lock_guard lock(mutex);
+	const bool had_view_info = shard.view_info.has_value();
+	size_t shards_sent = 0;
+	size_t bytes_sent = 0;
 	if (end_of_frame)
 	{
 		timing_info.send_end = clock.to_headset(os_monotonic_get_ns());
@@ -334,6 +338,8 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 				cnx->send_control(to_headset::video_stream_data_shard{shard});
 			else
 				cnx->send_stream(to_headset::video_stream_data_shard{shard});
+			++shards_sent;
+			bytes_sent += shard.payload.size();
 		}
 		catch (...)
 		{
@@ -344,7 +350,22 @@ void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool co
 		begin = next;
 	}
 	if (end_of_frame)
+	{
 		cnx->dump_time("send_end", shard.frame_idx, os_monotonic_get_ns(), stream_idx);
+		++completed_send_logs;
+		if (completed_send_logs <= 5 || completed_send_logs % 60 == 0)
+		{
+			U_LOG_I(
+			        "sent frame %llu stream %u shards=%zu bytes=%zu control=%d first_shard_view_info=%d send_count=%llu",
+			        (unsigned long long)shard.frame_idx,
+			        stream_idx,
+			        shards_sent,
+			        bytes_sent,
+			        control,
+			        had_view_info,
+			        (unsigned long long)completed_send_logs);
+		}
+	}
 }
 
 } // namespace wivrn

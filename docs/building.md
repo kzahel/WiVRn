@@ -204,6 +204,45 @@ successfully and the Quest client reached decoder startup with:
 - `decoded image size: 1088x1088`
 - `Stream scene ready`
 
+The most recent Apple x264 diagnostics on April 3, 2026 narrowed the remaining
+uncertainty:
+
+- the host now logs completed x264 frames for streams `0` and `1`
+- those runs reach `next_mb == num_mb`, so the Apple left/right encode path is
+  producing complete frames rather than stalling mid-frame
+- the current client-side startup warning is now stream-indexed:
+  - `stream 1 frame 6 was not sent because no shard was received`
+
+So the old theory "nothing is being encoded" is no longer the best match for
+the evidence. The remaining Apple x264 issue is narrower:
+
+- Quest decoder bring-up succeeds and reaches `Stream scene ready`
+- left/right color encode is alive on macOS
+- there is still at least one early startup-side right-eye frame drop during
+  decoder transition, and visible in-headset confirmation is still pending
+
+One more Apple-only runtime quirk then showed up during repeated host restarts:
+
+- the compositor IPC socket path could disappear from the filesystem even while
+  `wivrn-server-headless` still had it open
+- in that state, `libopenxr_wivrn.dylib` failed with
+  `XR_ERROR_RUNTIME_UNAVAILABLE`
+
+The current local workaround in the macOS Monado fork is to preserve the Apple
+IPC socket pathname during this port spike instead of unlinking it at teardown.
+With that in place, the runtime path works again and this now succeeds on the
+reference machine:
+
+```sh
+MONADO_OPENXR_RUNTIME_PATH=build-macos-host/_deps/monado-build/src/xrt/targets/openxr/libopenxr_wivrn.dylib \
+  MACOS_OPENXR_VULKAN_PROBE_PER_VIEW_SWAPCHAINS=1 \
+  MACOS_OPENXR_VULKAN_PROBE_FRAMES=120 \
+  /tmp/monado-macos-kg/tests/tests_macos_openxr_vulkan_probe
+```
+
+which again submits 120 projection frames through the live WiVRn runtime and
+leaves the Quest client at decoder startup plus `Stream scene ready`.
+
 The next blockers are no longer handshake or `vkCreateImage` bring-up. They
 are:
 
