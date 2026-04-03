@@ -33,6 +33,7 @@
 #include "xrt_cast.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <ranges>
 #include <vector>
 #include <vulkan/vulkan.hpp>
@@ -48,6 +49,17 @@ namespace wivrn
 {
 namespace
 {
+bool
+log_apple_source_samples_enabled()
+{
+#if defined(__APPLE__)
+	static const bool enabled = std::getenv("WIVRN_LOG_APPLE_SOURCE_SAMPLES") != nullptr;
+	return enabled;
+#else
+	return false;
+#endif
+}
+
 bool uses_two_layer_apple_software_path(const std::array<encoder_settings, 3> & settings)
 {
 #if defined(__APPLE__)
@@ -498,7 +510,7 @@ void wivrn_comp_target::run_present(std::stop_token stop_token, int index, std::
 		auto frame_index = psc.frame_index;
 
 		auto res = vk.device.waitForFences(*psc.fence, true, UINT64_MAX);
-		if (index == 0 && settings[0].rgba_input)
+		if (index == 0 && settings[0].rgba_input && log_apple_source_samples_enabled())
 		{
 			++rgba_debug.log_count;
 			if (rgba_debug.log_count <= 5 || rgba_debug.log_count % 120 == 0)

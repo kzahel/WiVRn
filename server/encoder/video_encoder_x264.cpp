@@ -24,11 +24,32 @@
 #include "util/u_logging.h"
 #include "utils/wivrn_vk_bundle.h"
 
+#include <cstdlib>
 #include <cstdio>
 #include <stdexcept>
 
 namespace wivrn
 {
+namespace
+{
+bool
+log_apple_rgba_samples_enabled()
+{
+#if defined(__APPLE__)
+	static const bool enabled = std::getenv("WIVRN_LOG_APPLE_RGBA_SAMPLES") != nullptr;
+	return enabled;
+#else
+	return false;
+#endif
+}
+
+bool
+log_x264_frame_stats_enabled()
+{
+	static const bool enabled = std::getenv("WIVRN_LOG_X264_FRAME_STATS") != nullptr;
+	return enabled;
+}
+} // namespace
 
 void video_encoder_x264::ProcessCb(x264_t * h, x264_nal_t * nal, void * opaque)
 {
@@ -298,39 +319,41 @@ void video_encoder_x264::convert_rgba_to_nv12(uint8_t slot)
 		}
 	}
 
-	++rgba_debug_log_count;
-	if (rgba_debug_log_count <= 5 || rgba_debug_log_count % 120 == 0)
-	{
-		const size_t center_index = ((extent.height / 2) * extent.width + (extent.width / 2)) * 4;
-		const size_t center_y_index = (extent.height / 2) * extent.width + (extent.width / 2);
-		const size_t center_uv_index = (extent.height / 4) * extent.width + (extent.width / 2 & ~1u);
-		uint32_t sampled_luma_sum = 0;
-		uint32_t sampled_luma_count = 0;
-		for (uint32_t sample_y = 0; sample_y < extent.height; sample_y += std::max(1u, extent.height / 4))
+	if (log_apple_rgba_samples_enabled()) {
+		++rgba_debug_log_count;
+		if (rgba_debug_log_count <= 5 || rgba_debug_log_count % 120 == 0)
 		{
-			for (uint32_t sample_x = 0; sample_x < extent.width; sample_x += std::max(1u, extent.width / 4))
+			const size_t center_index = ((extent.height / 2) * extent.width + (extent.width / 2)) * 4;
+			const size_t center_y_index = (extent.height / 2) * extent.width + (extent.width / 2);
+			const size_t center_uv_index = (extent.height / 4) * extent.width + (extent.width / 2 & ~1u);
+			uint32_t sampled_luma_sum = 0;
+			uint32_t sampled_luma_count = 0;
+			for (uint32_t sample_y = 0; sample_y < extent.height; sample_y += std::max(1u, extent.height / 4))
 			{
-				sampled_luma_sum += y_plane[sample_y * extent.width + sample_x];
-				++sampled_luma_count;
+				for (uint32_t sample_x = 0; sample_x < extent.width; sample_x += std::max(1u, extent.width / 4))
+				{
+					sampled_luma_sum += y_plane[sample_y * extent.width + sample_x];
+					++sampled_luma_count;
+				}
 			}
-		}
 
-		fprintf(stderr,
-		        "apple-rgba stream=%u rgba0=(%u,%u,%u,%u) rgbaC=(%u,%u,%u,%u) y0=%u yC=%u uvC=(%u,%u) yAvg=%u\n",
-		        unsigned(stream_idx),
-		        unsigned(rgba[0]),
-		        unsigned(rgba[1]),
-		        unsigned(rgba[2]),
-		        unsigned(rgba[3]),
-		        unsigned(rgba[center_index + 0]),
-		        unsigned(rgba[center_index + 1]),
-		        unsigned(rgba[center_index + 2]),
-		        unsigned(rgba[center_index + 3]),
-		        unsigned(y_plane[0]),
-		        unsigned(y_plane[center_y_index]),
-		        unsigned(uv_plane[center_uv_index + 0]),
-		        unsigned(uv_plane[center_uv_index + 1]),
-		        sampled_luma_count == 0 ? 0u : sampled_luma_sum / sampled_luma_count);
+			fprintf(stderr,
+			        "apple-rgba stream=%u rgba0=(%u,%u,%u,%u) rgbaC=(%u,%u,%u,%u) y0=%u yC=%u uvC=(%u,%u) yAvg=%u\n",
+			        unsigned(stream_idx),
+			        unsigned(rgba[0]),
+			        unsigned(rgba[1]),
+			        unsigned(rgba[2]),
+			        unsigned(rgba[3]),
+			        unsigned(rgba[center_index + 0]),
+			        unsigned(rgba[center_index + 1]),
+			        unsigned(rgba[center_index + 2]),
+			        unsigned(rgba[center_index + 3]),
+			        unsigned(y_plane[0]),
+			        unsigned(y_plane[center_y_index]),
+			        unsigned(uv_plane[center_uv_index + 0]),
+			        unsigned(uv_plane[center_uv_index + 1]),
+			        sampled_luma_count == 0 ? 0u : sampled_luma_sum / sampled_luma_count);
+		}
 	}
 }
 
@@ -378,9 +401,13 @@ std::optional<video_encoder::data> video_encoder_x264::encode(uint8_t slot, uint
 	next_mb = 0;
 	assert(pending_nals.empty());
 	int size = x264_encoder_encode(enc, &nal, &num_nal, &pic, &pic_out);
-	++encode_log_count;
-	if (encode_log_count <= 5 || encode_log_count % 60 == 0)
+	if (log_x264_frame_stats_enabled())
 	{
+		++encode_log_count;
+		if (!(encode_log_count <= 5 || encode_log_count % 60 == 0)) {
+			goto skip_encode_log;
+		}
+
 		fprintf(stderr,
 		        "x264 stream=%u frame=%llu size=%d nals=%d next_mb=%d num_mb=%d pending=%zu control=%d\n",
 		        unsigned(stream_idx),
@@ -392,6 +419,7 @@ std::optional<video_encoder::data> video_encoder_x264::encode(uint8_t slot, uint
 		        pending_nals.size(),
 		        int(control));
 	}
+skip_encode_log:
 	if (next_mb != num_mb)
 	{
 		U_LOG_W("unexpected macroblock count: %d", next_mb);
