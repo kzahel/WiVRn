@@ -76,7 +76,7 @@ set(XRT_OXR_RUNTIME_SUFFIX        "wivrn"          CACHE STRING "OpenXR client l
 
 FetchContent_MakeAvailable(monado)
 
-if (WIVRN_BUILD_SERVER)
+if (WIVRN_BUILD_SERVER_SHELL)
 	add_executable(wivrn-server
 			accept_connection.cpp
 			active_runtime.cpp
@@ -113,7 +113,6 @@ if (WIVRN_BUILD_SERVER)
 			driver/wivrn_htc_face_tracker.cpp
 			driver/wivrn_generic_tracker.cpp
 			driver/wivrn_foveation.cpp
-			driver/wivrn_uinput.cpp
 			driver/wivrn_session.cpp
 			driver/wivrn_connection.cpp
 			driver/xrt_cast.cpp
@@ -202,7 +201,6 @@ if (WIVRN_BUILD_SERVER)
 	add_dependencies(wivrn-server-dbus wivrn-server-dbus-codegen)
 	target_link_libraries(wivrn-server-dbus PUBLIC PkgConfig::glib2)
 	target_link_libraries(wivrn-server PUBLIC wivrn-server-dbus)
-	target_link_libraries(wivrn-server PUBLIC PkgConfig::libnotify)
 
 	if(WIVRN_USE_SYSTEMD)
 		add_custom_command(OUTPUT systemd_manager.c systemd_manager.h
@@ -230,14 +228,28 @@ if (WIVRN_BUILD_SERVER)
 			ipc_server
 			xrt-external-openxr
 			xrt-interfaces
-
-			PkgConfig::AVAHI
 			Eigen3::Eigen
 			wivrn-common
 			wivrn-common-server
 			wivrn-external
 			nlohmann_json::nlohmann_json
 		)
+
+	if(WIVRN_USE_UINPUT)
+		target_sources(wivrn-server PRIVATE driver/wivrn_uinput.cpp)
+	endif()
+
+	if(WIVRN_USE_DBUS_CONTROL)
+		target_link_libraries(wivrn-server PRIVATE PkgConfig::glib2)
+	endif()
+
+	if(WIVRN_USE_AVAHI)
+		target_link_libraries(wivrn-server PRIVATE PkgConfig::AVAHI)
+	endif()
+
+	if(WIVRN_USE_LIBNOTIFY)
+		target_link_libraries(wivrn-server PRIVATE PkgConfig::libnotify)
+	endif()
 
 	target_compile_definitions(wivrn-server PRIVATE JSON_DIAGNOSTICS=1)
 

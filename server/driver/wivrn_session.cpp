@@ -21,7 +21,6 @@
 #include "wivrn_session.h"
 
 #include "accept_connection.h"
-#include "application.h"
 #include "configuration.h"
 #include "driver/app_pacer.h"
 #include "main/comp_compositor.h"
@@ -31,7 +30,6 @@
 #include "util/u_builders.h"
 #include "util/u_logging.h"
 #include "util/u_system.h"
-#include "utils/load_icon.h"
 #include "utils/method.h"
 #include "utils/scoped_lock.h"
 
@@ -45,6 +43,11 @@
 #include "wivrn_generic_tracker.h"
 #include "wivrn_htc_face_tracker.h"
 #include "wivrn_ipc.h"
+
+#if WIVRN_USE_APPLICATIONS
+#include "application.h"
+#include "utils/load_icon.h"
+#endif
 
 #include "wivrn_packets.h"
 #include "xr/to_string.h"
@@ -269,6 +272,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 		strlcpy(xrt_system.base.properties.name, system_name.c_str(), std::size(xrt_system.base.properties.name));
 	}
 
+#if WIVRN_USE_UINPUT
 	if (configuration().hid_forwarding)
 	{
 		try
@@ -285,6 +289,7 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 			});
 		}
 	}
+#endif
 }
 
 wivrn_session::~wivrn_session()
@@ -432,8 +437,10 @@ void wivrn_session::resume_session()
 	if (audio_handle)
 		audio_handle->resume();
 
+#if WIVRN_USE_UINPUT
 	if (uinput_handler)
 		send_control(to_headset::feature_control{to_headset::feature_control::hid_input, true});
+#endif
 
 	{
 		std::shared_lock lock(comp_target_mutex);
@@ -460,11 +467,13 @@ void wivrn_session::resume_session()
 		});
 	}
 
+#if WIVRN_USE_APPLICATIONS
 	(*this)(from_headset::get_application_list{
 	        .language = get_info().language,
 	        .country = get_info().country,
 	        .variant = get_info().variant,
 	});
+#endif
 
 	// resume session and notify clients
 
@@ -712,6 +721,7 @@ void wivrn_session::operator()(from_headset::inputs && inputs)
 
 void wivrn_session::operator()(from_headset::hid::input && e)
 {
+#if WIVRN_USE_UINPUT
 	try
 	{
 		if (uinput_handler)
@@ -726,6 +736,9 @@ void wivrn_session::operator()(from_headset::hid::input && e)
 		U_LOG_E("HID forwarding error: %s", e.what());
 		uinput_handler.reset();
 	}
+#else
+	(void)e;
+#endif
 }
 
 void wivrn_session::operator()(from_headset::timesync_response && timesync)
@@ -839,6 +852,7 @@ void wivrn_session::operator()(from_headset::get_application_list && request)
 	        .variant = std::move(request.variant),
 	};
 
+#if WIVRN_USE_APPLICATIONS
 	auto apps = list_applications();
 
 	for (const auto & [id, app]: apps)
@@ -880,11 +894,19 @@ void wivrn_session::operator()(from_headset::get_application_list && request)
 			}
 		}
 	}
+#else
+	U_LOG_I("Application listing disabled in this build");
+#endif
 }
 
 void wivrn_session::operator()(const from_headset::start_app & request)
 {
+#if WIVRN_USE_APPLICATIONS
 	send_to_main(request);
+#else
+	U_LOG_W("Application launching disabled in this build");
+	(void)request;
+#endif
 }
 
 void wivrn_session::operator()(const from_headset::get_running_applications &)

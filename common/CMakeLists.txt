@@ -26,7 +26,7 @@ add_library(wivrn-common STATIC EXCLUDE_FROM_ALL
     vk/vk_mem_alloc.cpp
 )
 
-if (WIVRN_BUILD_DASHBOARD OR WIVRN_BUILD_SERVER)
+if (WIVRN_BUILD_DASHBOARD OR (WIVRN_BUILD_SERVER AND WIVRN_USE_APPLICATIONS))
     add_library(wivrn-common-server STATIC EXCLUDE_FROM_ALL
         application.cpp
         utils/flatpak.cpp

@@ -36,6 +36,39 @@ Lighthouse driver support for use with lighthouse-tracked devices
 
 Additionally, if your environment requires absolute paths inside the OpenXR runtime manifest, you can add `-DWIVRN_OPENXR_MANIFEST_TYPE=absolute` to the build configuration.
 
+The current macOS host-port branch is starting to separate the Linux desktop shell from the underlying runtime pieces. New host-shell feature gates now exist for:
+
+- `-DWIVRN_USE_AVAHI=OFF`
+- `-DWIVRN_USE_DBUS_CONTROL=OFF`
+- `-DWIVRN_USE_LIBNOTIFY=OFF`
+- `-DWIVRN_USE_UINPUT=OFF`
+- `-DWIVRN_USE_APPLICATIONS=OFF`
+- `-DWIVRN_BUILD_WIVRNCTL=OFF`
+
+At the moment, disabling those is mainly useful for early portability work and runtime-library-only builds. `WIVRN_USE_APPLICATIONS=OFF` also disables headset-driven desktop application browsing, icon loading, and launch requests, which removes the `librsvg`, `libarchive`, and PNG dependency path from a minimal host build.
+
+The full `wivrn-server` desktop shell still depends on a Linux/GLib entry path and currently requires `WIVRN_USE_APPLICATIONS=ON`. On this branch, `WIVRN_BUILD_WIVRNCTL` now also defaults to `OFF` on macOS because the CLI tool depends on the same Linux control stack assumptions.
+
+A minimal macOS runtime-library configure probe currently looks like:
+
+```sh
+cmake -S . -B build-macos-host -GNinja \
+  -DWIVRN_BUILD_SERVER=ON \
+  -DWIVRN_BUILD_SERVER_LIBRARY=ON \
+  -DWIVRN_USE_AVAHI=OFF \
+  -DWIVRN_USE_DBUS_CONTROL=OFF \
+  -DWIVRN_USE_LIBNOTIFY=OFF \
+  -DWIVRN_USE_UINPUT=OFF \
+  -DWIVRN_USE_APPLICATIONS=OFF \
+  -DWIVRN_USE_PIPEWIRE=OFF \
+  -DWIVRN_USE_PULSEAUDIO=OFF
+```
+
+On this branch, that probe now gets past the Linux desktop-shell and application-browser dependencies. The next blocker on the current macOS machine is Boost provisioning:
+
+- `WIVRN_USE_SYSTEM_BOOST=ON`: requires a system Boost installation with `locale`, `url`, and `iostreams`
+- `WIVRN_USE_SYSTEM_BOOST=OFF`: uses `FetchContent` to download Boost 1.89.0 from GitHub
+
 # Dashboard
 
 The WiVRn dashboard requires Qt6, and the WiVRn server.

@@ -123,6 +123,19 @@ Suggested initial defaults:
 - Linux: keep current behavior by default
 - macOS: all of the above default `OFF`
 
+This first branch pass now implements those build flags in CMake and wires `WIVRN_USE_UINPUT` through the session code. The desktop `wivrn-server` entrypoint is still GLib/DBus/Avahi/libnotify-based, so those flags are currently a structural refactor step rather than a complete headless macOS host.
+
+The next branch pass adds `WIVRN_USE_APPLICATIONS` so a minimal runtime-library build can also skip WiVRn's desktop application discovery/icon path. That removes the `librsvg`, PNG, and `libarchive` dependency chain from the first macOS configure attempt. The desktop `wivrn-server` shell still assumes application listing/launch support and currently requires `WIVRN_USE_APPLICATIONS=ON`.
+
+The branch also flips `WIVRN_BUILD_WIVRNCTL` to default `OFF` on macOS. `wivrnctl` is not part of the first host-port milestone, and leaving it enabled by default just creates another early configure failure on Apple before the actual runtime/library work is reached.
+
+As of the April 3, 2026 configure probe on the reference macOS machine, these refactors are enough to move the first failure past Linux host-shell assumptions and down to Boost provisioning:
+
+- with `WIVRN_USE_SYSTEM_BOOST=ON`, CMake fails because the current machine does not have Boost `locale`, `url`, and `iostreams`
+- with `WIVRN_USE_SYSTEM_BOOST=OFF`, CMake reaches `FetchContent_MakeAvailable(boost)` and then fails in the current restricted environment when it cannot resolve `github.com`
+
+That is useful progress: the next blocker is now a real dependency strategy question rather than another hidden Linux runtime coupling.
+
 ## Monado Patch Inventory
 
 WiVRn depends on a real Monado patch stack. The current macOS Monado fork is:

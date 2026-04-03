@@ -34,6 +34,11 @@ static const int64_t max_extrapolation_ns = 80'000'000;
 #cmakedefine01 WIVRN_USE_X264
 
 #cmakedefine01 WIVRN_USE_SYSTEMD
+#cmakedefine01 WIVRN_USE_AVAHI
+#cmakedefine01 WIVRN_USE_DBUS_CONTROL
+#cmakedefine01 WIVRN_USE_LIBNOTIFY
+#cmakedefine01 WIVRN_USE_UINPUT
+#cmakedefine01 WIVRN_USE_APPLICATIONS
 
 #cmakedefine01 WIVRN_USE_PIPEWIRE
 #cmakedefine01 WIVRN_USE_PULSEAUDIO

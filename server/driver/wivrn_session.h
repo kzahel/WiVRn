@@ -34,7 +34,10 @@
 #include "wivrn_htc_face_tracker.h"
 #include "wivrn_ipc.h"
 #include "wivrn_packets.h"
+#include "wivrn_config.h"
+#if WIVRN_USE_UINPUT
 #include "wivrn_uinput.h"
+#endif
 #include "xrt/xrt_results.h"
 #include "xrt/xrt_system.h"
 #include <fstream>
@@ -98,7 +101,9 @@ class wivrn_session : public xrt_system_devices
 	std::optional<wivrn_fb_face2_tracker> fb_face2_tracker;
 	std::optional<wivrn_htc_face_tracker> htc_face_tracker;
 	beman::inplace_vector::inplace_vector<wivrn_generic_tracker, from_headset::body_tracking::max_tracked_poses> generic_trackers;
+	#if WIVRN_USE_UINPUT
 	std::optional<wivrn_uinput> uinput_handler;
+#endif
 
 	std::shared_mutex comp_target_mutex;
 	wivrn_comp_target * comp_target;
