@@ -84,6 +84,28 @@ ninja -C build-macos-host openxr_wivrn
 
 That does not mean the full WiVRn host is working on macOS yet. It means the branch has now reached a real buildable OpenXR runtime target on top of the local macOS Monado fork, which is the first meaningful host-port checkpoint.
 
+The next branch checkpoint is a new minimal host target:
+
+```sh
+ninja -C build-macos-host wivrn-server-headless
+```
+
+On the current macOS port branch, that target now configures and gets deep into
+WiVRn server compilation on Apple. The remaining failures are no longer Linux
+desktop-shell dependencies. They are Monado integration mismatches:
+
+- `server/driver/wivrn_foveation.cpp` and
+  `server/driver/wivrn_comp_target.cpp` still expect WiVRn's
+  `0005-Replace-distortion-with-foveation.patch` Monado interfaces:
+  `view_cbcr`, `distortion.buffer`,
+  `render_compute_distortion_foveation_data`, and
+  `RENDER_FOVEATION_BUFFER_DIMENSIONS`
+- `server/driver/wivrn_session.cpp` still expects older Monado target-session
+  device-array fields such as `xdevs` and `xdev_count`
+
+That is a useful checkpoint: the branch is now past generic macOS portability
+and into the concrete WiVRn-on-Monado patch-port work.
+
 # Dashboard
 
 The WiVRn dashboard requires Qt6, and the WiVRn server.

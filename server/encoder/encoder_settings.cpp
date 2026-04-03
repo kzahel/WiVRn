@@ -47,8 +47,9 @@ static const double passthrough_bitrate_factor = 0.05;
 static void split_bitrate(std::array<wivrn::encoder_settings, 3> & encoders, uint64_t bitrate)
 {
 	double total_weight = 0;
-	for (auto [i, encoder]: std::ranges::enumerate_view(encoders))
+	for (size_t i = 0; i < encoders.size(); ++i)
 	{
+		auto & encoder = encoders[i];
 		double w = encoder.width * encoder.height;
 		if (i == 2)
 			w *= passthrough_bitrate_factor;
@@ -313,8 +314,9 @@ std::array<encoder_settings, 3> get_encoder_settings(wivrn_vk_bundle & bundle, c
 	for (size_t i = 0; i < 2; ++i)
 		check_video_size(res[i].encoder_name, res[i].codec, width, height);
 
-	for (auto [i, dst]: std::ranges::enumerate_view(res))
+	for (size_t i = 0; i < res.size(); ++i)
 	{
+		auto & dst = res[i];
 		dst.width = width;
 		dst.height = height;
 		if (i == 2) // alpha channel

@@ -284,20 +284,30 @@ void wivrn_comp_target::create_encoders()
 
 	std::map<int, std::vector<std::shared_ptr<video_encoder>>> thread_params;
 
-	for (auto [i, settings]: std::ranges::enumerate_view(settings))
+	for (size_t i = 0; i < settings.size(); ++i)
 	{
+		auto & settings_for_eye = settings[i];
 		auto & encoder = encoders.emplace_back(
-		        video_encoder::create(*wivrn_bundle, settings, i));
-		desc.codec[i] = settings.codec;
+		        video_encoder::create(*wivrn_bundle, settings_for_eye, i));
+		desc.codec[i] = settings_for_eye.codec;
 
-		thread_params[settings.group].emplace_back(encoder);
+		thread_params[settings_for_eye.group].emplace_back(encoder);
 	}
 
 	for (auto & [group, params]: thread_params)
 	{
-		auto & thread = encoder_threads.emplace_back([this](auto stop_token, auto... args) { return run_present(stop_token, args...); }, encoder_threads.size(), std::move(params));
+		int thread_index = static_cast<int>(encoder_threads.size());
+		auto & thread = encoder_threads.emplace_back(
+		        [this, thread_index, params = std::move(params)](std::stop_token stop_token) mutable {
+			        return run_present(stop_token, thread_index, std::move(params));
+		        });
 		std::string name = "encoder " + std::to_string(group);
+#if defined(__APPLE__)
+		(void)thread;
+		(void)name;
+#else
 		pthread_setname_np(thread.native_handle(), name.c_str());
+#endif
 	}
 	cnx.send_control(to_headset::video_stream_description{desc});
 }

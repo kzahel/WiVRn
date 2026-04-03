@@ -1,13 +1,25 @@
 #include "hostname.h"
+#include "wivrn_config.h"
 #include <limits.h>
 #include <unistd.h>
 
 #include "util/u_logging.h"
 
+#if WIVRN_USE_DBUS_CONTROL
 #include <gio/gio.h>
+#endif
+
+#ifndef HOST_NAME_MAX
+#ifdef MAXHOSTNAMELEN
+#define HOST_NAME_MAX MAXHOSTNAMELEN
+#else
+#define HOST_NAME_MAX 256
+#endif
+#endif
 
 static std::string _hostname()
 {
+#if WIVRN_USE_DBUS_CONTROL
 	GError * error = NULL;
 	GDBusConnection * con = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
 
@@ -58,6 +70,7 @@ static std::string _hostname()
 
 		g_object_unref(con);
 	}
+#endif
 
 	char buf[HOST_NAME_MAX];
 	int code = gethostname(buf, sizeof(buf));

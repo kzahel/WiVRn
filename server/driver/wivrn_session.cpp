@@ -27,7 +27,7 @@
 #include "main/comp_main_interface.h"
 #include "main/comp_target.h"
 #include "server/ipc_server.h"
-#include "util/u_builders.h"
+#include "target_builder_helpers.h"
 #include "util/u_logging.h"
 #include "util/u_system.h"
 #include "utils/method.h"
@@ -334,7 +334,7 @@ xrt_result_t wivrn::wivrn_session::create_session(std::unique_ptr<wivrn_connecti
 	}
 	self->system_compositor = *out_xsysc;
 
-	u_builder_create_space_overseer_legacy(
+	t_builder_create_space_overseer_legacy(
 	        &self->xrt_system.broadcast,
 	        &self->hmd,
 	        self->static_roles.eyes,

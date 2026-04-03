@@ -134,8 +134,9 @@ public:
 		const sample * closest = data.data();
 
 		int row = 0;
-		for (const auto && [i, sample]: std::ranges::enumerate_view(data))
+		for (size_t i = 0; i < data.size(); ++i)
 		{
+			const auto & sample = data[i];
 			if (std::abs(closest->timestamp - timestamp) > std::abs(sample.timestamp - timestamp))
 				closest = &sample;
 

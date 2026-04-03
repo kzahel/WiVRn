@@ -149,6 +149,29 @@ With those fixes in place, the minimal macOS host probe now reaches a real build
 
 That is the first concrete "WiVRn-derived server builds on macOS" checkpoint, even though it is still only the runtime-library slice and not the full desktop shell.
 
+The next branch pass adds a first macOS-only host executable,
+`wivrn-server-headless`, and a set of Darwin portability fixes:
+
+- explicit headless target split from the Linux desktop shell
+- `GitVersion.cmake` no longer depends on implicit build-time working
+  directories
+- Darwin fallbacks in `common/wivrn_sockets.cpp` for:
+  - IPv6 multicast membership constants
+  - `sendmmsg` / `recvmmsg`
+  - stricter libc++ narrowing rules
+- libc++ portability fixes for missing `std::ranges::enumerate_view`
+- macOS-safe hostname and process includes
+- Monado helper API updated from the removed `u_builders.h` include to
+  `target_builder_helpers.h`
+
+As of the April 3, 2026 compile probe on the reference machine:
+
+- `cmake -S . -B build-macos-host ...` succeeds for the headless target
+- `ninja -C build-macos-host wivrn-server-headless` gets deep into WiVRn
+  server compilation
+- the remaining blockers are now Monado-facing API mismatches, not generic
+  host-shell or Darwin portability issues
+
 ## Monado Patch Inventory
 
 WiVRn depends on a real Monado patch stack. The current macOS Monado fork is:
@@ -237,6 +260,38 @@ Assessment:
 - may be deferrable only if the first macOS host can temporarily tolerate a
   simpler output path than upstream WiVRn expects
 - otherwise this is an early major port task
+
+Concrete evidence from the current headless build:
+
+- `server/driver/wivrn_comp_target.cpp` still expects `comp_target_image.view_cbcr`
+- `server/driver/wivrn_foveation.cpp` still expects:
+  - `render_resources.distortion.buffer`
+  - `render_compute_distortion_foveation_data`
+  - `RENDER_FOVEATION_BUFFER_DIMENSIONS`
+
+Those symbols appear directly in WiVRn's
+`patches/monado/0005-Replace-distortion-with-foveation.patch` and do not exist
+in the current macOS Monado fork.
+
+#### Monado helper/session drift beyond WiVRn patch 0005
+
+Status against current macOS Monado fork: present.
+
+Evidence from current headless build:
+
+- `server/driver/wivrn_session.cpp` no longer matches the current Monado target
+  session layout and fails on device-array members such as `xdevs` and
+  `xdev_count`
+- the old `util/u_builders.h` include is gone from current Monado and had to
+  be updated to `src/xrt/targets/helpers/target_builder_helpers.h`
+
+Assessment:
+
+- this is separate from WiVRn's explicit patch stack
+- it is normal upstream drift between WiVRn's pinned Monado revision and the
+  active macOS fork
+- it should be handled alongside the patch-port matrix, not treated as an
+  unrelated macOS problem
 
 #### `0006-d-steamvr_lh-prevent-crash-on-vive-pro2-WiVRn.patch`
 

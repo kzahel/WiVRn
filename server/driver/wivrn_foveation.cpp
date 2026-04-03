@@ -354,8 +354,9 @@ static void fill_ubo(
 	ubo[0] = offset;
 	if (flip)
 		ubo[0] += size;
-	for (auto [i, n]: std::ranges::enumerate_view(params))
+	for (size_t i = 0; i < params.size(); ++i)
 	{
+		auto n = params[i];
 		const int n_source = std::abs(n_ratio - int(i)) + 1;
 		for (size_t j = 0; j < n; ++j)
 		{

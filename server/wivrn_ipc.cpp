@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 std::unique_ptr<wivrn::wivrn_connection> connection;
 

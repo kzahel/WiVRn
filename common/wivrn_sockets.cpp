@@ -35,6 +35,66 @@
 #include <system_error>
 #include <unistd.h>
 
+#if defined(__APPLE__)
+#ifndef IPV6_ADD_MEMBERSHIP
+#define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
+#endif
+#ifndef IPV6_DROP_MEMBERSHIP
+#define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
+#endif
+
+struct mmsghdr
+{
+	msghdr msg_hdr;
+	unsigned int msg_len;
+};
+
+static int
+recvmmsg(int fd, struct mmsghdr * msgvec, unsigned int vlen, int flags, struct timespec *)
+{
+	unsigned int received = 0;
+
+	for (; received < vlen; ++received)
+	{
+		ssize_t result = recvmsg(fd, &msgvec[received].msg_hdr, flags);
+		if (result < 0)
+		{
+			if (received > 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+				return static_cast<int>(received);
+			return -1;
+		}
+
+		if (result == 0)
+			break;
+
+		msgvec[received].msg_len = static_cast<unsigned int>(result);
+	}
+
+	return static_cast<int>(received);
+}
+
+static int
+sendmmsg(int fd, struct mmsghdr * msgvec, unsigned int vlen, int flags)
+{
+	unsigned int sent = 0;
+
+	for (; sent < vlen; ++sent)
+	{
+		ssize_t result = sendmsg(fd, &msgvec[sent].msg_hdr, flags);
+		if (result < 0)
+		{
+			if (sent > 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+				return static_cast<int>(sent);
+			return -1;
+		}
+
+		msgvec[sent].msg_len = static_cast<unsigned int>(result);
+	}
+
+	return static_cast<int>(sent);
+}
+#endif
+
 thread_local crypto::encrypt_context wivrn::UDP::encrypter{EVP_aes_128_ctr()};
 std::atomic<uint64_t> wivrn::UDP::iv_counter;
 
@@ -328,7 +388,7 @@ wivrn::deserialization_packet wivrn::UDP::receive_raw()
 		mmsgs[i] = {
 		        .msg_hdr = {
 		                .msg_iov = &iovecs[i],
-		                .msg_iovlen = 1,
+		                .msg_iovlen = static_cast<decltype(msghdr{}.msg_iovlen)>(1),
 		        },
 		};
 	}
@@ -443,9 +503,9 @@ size_t wivrn::UDP::send_many_raw(std::span<serialization_packet> packets)
 		}
 
 		if (encrypted)
-			mmsgs.push_back({.msg_hdr = {.msg_iovlen = data.size() + 1}});
+			mmsgs.push_back({.msg_hdr = {.msg_iovlen = static_cast<decltype(msghdr{}.msg_iovlen)>(data.size() + 1)}});
 		else
-			mmsgs.push_back({.msg_hdr = {.msg_iovlen = data.size()}});
+			mmsgs.push_back({.msg_hdr = {.msg_iovlen = static_cast<decltype(msghdr{}.msg_iovlen)>(data.size())}});
 	}
 
 	for (size_t i = 0, j = 0; i < packets.size(); ++i)
@@ -561,7 +621,7 @@ size_t wivrn::TCP::send_raw(serialization_packet && packet)
 	        .msg_name = nullptr,
 	        .msg_namelen = 0,
 	        .msg_iov = iovecs.data(),
-	        .msg_iovlen = iovecs.size(),
+	        .msg_iovlen = static_cast<decltype(msghdr{}.msg_iovlen)>(iovecs.size()),
 	        .msg_control = nullptr,
 	        .msg_controllen = 0,
 	        .msg_flags = 0,
@@ -635,7 +695,7 @@ size_t wivrn::TCP::send_many_raw(std::span<serialization_packet> packets)
 	        .msg_name = nullptr,
 	        .msg_namelen = 0,
 	        .msg_iov = iovecs.data(),
-	        .msg_iovlen = iovecs.size(),
+	        .msg_iovlen = static_cast<decltype(msghdr{}.msg_iovlen)>(iovecs.size()),
 	        .msg_control = nullptr,
 	        .msg_controllen = 0,
 	        .msg_flags = 0,
