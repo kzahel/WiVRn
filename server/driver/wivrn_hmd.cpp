@@ -222,8 +222,7 @@ void wivrn_hmd::set_foveated_size(uint32_t width, uint32_t height)
 	for (int i = 0; i < 2; ++i)
 	{
 		auto & view = hmd->views[i];
-		// offset is only applicable for alpha channel
-		view.viewport.x_pixels = i * width;
+		view.viewport.x_pixels = 0;
 		view.viewport.y_pixels = 0;
 
 		view.viewport.w_pixels = width;
