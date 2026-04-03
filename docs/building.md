@@ -139,6 +139,9 @@ macOS:
   toolchain directory instead of hardcoding `linux-x86_64`
 - that helper now preserves a sane macOS `PATH` and uses a bounded `make -j`
   level during the Android OpenSSL sub-build
+- that helper also configures a minimal Android OpenSSL build (`shared`,
+  `no-apps`, `no-tests`) so local Quest-client rebuilds do not spend extra time
+  compiling unused OpenSSL utilities
 
 With those fixes in place, the initial WiVRn headset handshake now completes
 successfully against `wivrn-server-headless` on macOS.

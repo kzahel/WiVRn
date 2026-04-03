@@ -33,6 +33,9 @@ if (NOT TARGET OpenSSL::Crypto)
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env ANDROID_NDK_ROOT=${CMAKE_ANDROID_NDK} PATH=${OPENSSL_BUILD_ENV_PATH} ./Configure
             android-arm64
+            shared
+            no-apps
+            no-tests
             --prefix=${FETCHCONTENT_BASE_DIR}/openssl
             --openssldir=${FETCHCONTENT_BASE_DIR}/openssl
         WORKING_DIRECTORY ${FETCHCONTENT_BASE_DIR}/openssl-src
