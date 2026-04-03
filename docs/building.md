@@ -224,11 +224,26 @@ the evidence. The remaining Apple x264 issue is narrower:
 - that same black result reproduces for both projection-layer and quad-layer
   submission
 
-So the current blocker is now after app rendering and before Apple encode:
-submitted app layers are turning black somewhere in the Monado/WiVRn compositor
-path on macOS.
-- there is still at least one early startup-side right-eye frame drop during
-  decoder transition, and visible in-headset confirmation is still pending
+That old theory is no longer the current best explanation. The next Apple
+runtime checkpoint changed the picture:
+
+- the macOS Monado fork now skips the MoltenVK queue-idle path that was
+  deadlocking WiVRn startup during swapchain creation
+- the old Apple swapchain-create timeout in `do_post_create_vulkan_setup()`
+  is also bypassed for the current IOSurface path
+- default stereo array swapchains now fail later with a clear Metal assertion:
+  `IOSurface texture: must be of type MTLTextureType2D, textureType (MTLTextureType2DArray) disallowed`
+- with `MACOS_OPENXR_VULKAN_PROBE_PER_VIEW_SWAPCHAINS=1`, that array-texture
+  assertion is avoided and the runtime gets deeper into the probe path
+- the current live stall on that per-view path is now in the probe's own
+  `clear_swapchain_image()` fence wait on MoltenVK
+
+So the current blocker is now Apple swapchain semantics, not the old
+post-submit black-frame theory:
+
+- real array swapchains still need an Apple-compatible IOSurface path
+- the current probe-side per-view fallback still needs a MoltenVK-safe clear
+  path before visible in-headset validation can resume
 
 One more Apple-only runtime quirk then showed up during repeated host restarts:
 

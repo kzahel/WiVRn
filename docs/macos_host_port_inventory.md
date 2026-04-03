@@ -302,13 +302,28 @@ With that workaround in place:
 - the current client-side startup warning is now narrowed to:
   - `stream 1 frame 6 was not sent because no shard was received`
 
+The next Apple compositor probe changed that status further:
+
+- the old WiVRn startup deadlock on MoltenVK queue-idle is now cleared in the
+  macOS Monado fork
+- the old Apple swapchain-create timeout in
+  `comp_swapchain.c:do_post_create_vulkan_setup()` is also bypassed for the
+  current port spike
+- default stereo array swapchains now fail later and more explicitly with:
+  `IOSurface texture: must be of type MTLTextureType2D, textureType (MTLTextureType2DArray) disallowed`
+- with per-view swapchains enabled in the macOS probe, that array-texture
+  assertion is avoided and the runtime progresses beyond swapchain creation
+- the current per-view-only live stall is then in the probe's own
+  `clear_swapchain_image()` fence wait on MoltenVK
+
 So the current branch status is now:
 
 - protocol negotiation: working
 - macOS host/compositor startup: working
 - first encoded video path: partially working on the temporary Apple x264 path
-- remaining blocker: startup-side stream continuity and visible in-headset
-  confirmation, not `vkCreateImage` bring-up
+- current Apple blocker: array swapchain support on the IOSurface path
+- temporary Apple validation path: per-view swapchains, pending a probe-side
+  MoltenVK fence fix
 - local Apple workaround: preserve the IPC socket pathname so the runtime can
   actually reconnect to the live headless host
 
@@ -316,8 +331,8 @@ Two important caveats remain:
 
 - Apple alpha passthrough is still disabled on this temporary path and must be
   restored before the real MVP is complete
-- Quest logs still showed early missing-shard warnings during live probe runs,
-  so frame delivery stability is not yet fully proven
+- generic stereo array swapchains still need a real Apple-compatible IOSurface
+  path; the current per-view path is only a temporary validation aid
 
 ## Monado Patch Inventory
 
