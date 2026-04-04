@@ -22,6 +22,7 @@
 
 #include "driver/wivrn_session.h"
 #include "encoder/video_encoder.h"
+#include "encoder/video_encoder_x264.h"
 #include "util/u_logging.h"
 #include "utils/method.h"
 #include "utils/scoped_lock.h"
@@ -54,6 +55,17 @@ log_apple_source_samples_enabled()
 {
 #if defined(__APPLE__)
 	static const bool enabled = std::getenv("WIVRN_LOG_APPLE_SOURCE_SAMPLES") != nullptr;
+	return enabled;
+#else
+	return false;
+#endif
+}
+
+bool
+log_apple_alpha_flow_enabled()
+{
+#if defined(__APPLE__)
+	static const bool enabled = std::getenv("WIVRN_LOG_APPLE_ALPHA_FLOW") != nullptr;
 	return enabled;
 #else
 	return false;
@@ -295,6 +307,24 @@ VkResult wivrn_comp_target::create_images_impl(vk::ImageUsageFlags flags)
 			        std::format("comp target rgba debug {}", eye));
 		}
 		rgba_debug.log_count = 0;
+
+		for (uint32_t i = 0; i < image_count; ++i)
+		{
+			for (uint32_t eye = 0; eye < 2; ++eye)
+			{
+				psc.images[i].apple_alpha_rgba[eye] = buffer_allocation(
+				        device,
+				        {
+				                .size = vk::DeviceSize(width * height * 4),
+				                .usage = vk::BufferUsageFlagBits::eTransferDst,
+				        },
+				        {
+				                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+				                .usage = VMA_MEMORY_USAGE_AUTO,
+				        },
+				        std::format("comp target apple alpha rgba {} {}", i, eye));
+			}
+		}
 	}
 
 	return VK_SUCCESS;
@@ -395,10 +425,11 @@ bool wivrn_comp_target::init_post_vulkan(uint32_t preferred_width, uint32_t pref
 		        *wivrn_bundle,
 		        cnx.get_info(),
 		        *cnx.get_settings());
-		supports_alpha_stream = not uses_two_layer_apple_software_path(settings);
-		image_array_layers = supports_alpha_stream ? 3u : 2u;
-		if (not supports_alpha_stream)
-			U_LOG_W("Using Apple software-encode compatibility path: alpha stream disabled until a separate Apple-friendly alpha layout exists");
+		const bool uses_apple_rgba_path = uses_two_layer_apple_software_path(settings);
+		supports_alpha_stream = true;
+		image_array_layers = uses_apple_rgba_path ? 2u : 3u;
+		if (uses_apple_rgba_path)
+			U_LOG_W("Using Apple software-encode compatibility path with CPU alpha extraction");
 		print_encoders(settings);
 
 		c->settings.preferred.width = settings[0].width;
@@ -616,13 +647,66 @@ VkResult wivrn_comp_target::present(
 	auto info = pacer.present_to_info(desired_present_time_ns);
 	const bool requested_alpha = c->base.layer_accum.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND;
 	const bool do_alpha = supports_alpha_stream and requested_alpha;
+	const bool uses_apple_rgba_path = settings[0].rgba_input;
+	const bool has_alpha_encoder =
+	        std::ranges::any_of(encoders, [](const auto & encoder) { return encoder->stream_idx == 2; });
+
+	if (log_apple_alpha_flow_enabled())
+	{
+		static uint64_t alpha_flow_log_count = 0;
+		++alpha_flow_log_count;
+		if (alpha_flow_log_count <= 10 || alpha_flow_log_count % 120 == 0 || requested_alpha != psc.view_info.alpha)
+		{
+			fprintf(stderr,
+			        "apple-alpha-flow frame=%llu env_blend_mode=%d supports_alpha=%d requested_alpha=%d do_alpha=%d "
+			        "prev_view_alpha=%d has_alpha_encoder=%d rgba_path=%d layer_count=%u\n",
+			        (unsigned long long)info.frame_id,
+			        int(c->base.layer_accum.data.env_blend_mode),
+			        supports_alpha_stream ? 1 : 0,
+			        requested_alpha ? 1 : 0,
+			        do_alpha ? 1 : 0,
+			        psc.view_info.alpha ? 1 : 0,
+			        has_alpha_encoder ? 1 : 0,
+			        uses_apple_rgba_path ? 1 : 0,
+			        c->base.layer_accum.layer_count);
+		}
+	}
 
 	bool need_queue_transfer = false;
 	std::vector<vk::Semaphore> present_done_sem;
+	if (uses_apple_rgba_path && do_alpha)
+	{
+		for (uint32_t eye = 0; eye < 2; ++eye)
+		{
+			command_buffer.copyImageToBuffer(
+			        psc_image.image,
+			        vk::ImageLayout::eTransferSrcOptimal,
+			        psc_image.apple_alpha_rgba[eye],
+			        vk::BufferImageCopy{
+			                .bufferRowLength = width,
+			                .imageSubresource = {
+			                        .aspectMask = vk::ImageAspectFlagBits::eColor,
+			                        .baseArrayLayer = eye,
+			                        .layerCount = 1,
+			                },
+			                .imageExtent = {
+			                        .width = width,
+			                        .height = height,
+			                        .depth = 1,
+			                }});
+		}
+	}
 	for (auto & encoder: encoders)
 	{
 		if (encoder->stream_idx == 2 and not do_alpha)
 			continue;
+		if (uses_apple_rgba_path && encoder->stream_idx == 2)
+		{
+			auto * x264 = dynamic_cast<video_encoder_x264 *>(encoder.get());
+			if (x264 == nullptr)
+				throw std::runtime_error("Apple alpha extraction requires x264 stream 2 encoder");
+			x264->set_external_alpha_sources(&psc_image.apple_alpha_rgba[0], &psc_image.apple_alpha_rgba[1]);
+		}
 		if (settings[0].rgba_input && encoder->stream_idx < 2)
 		{
 			const int32_t center_x = int32_t(width / 2);

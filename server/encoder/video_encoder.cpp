@@ -287,6 +287,7 @@ void video_encoder::encode(wivrn_session & cnx,
 	shard.view_info = view_info;
 	shard.timing_info.reset();
 
+	prepare_for_encode(encode_slot, frame_index);
 	auto data = encode(encode_slot, frame_index);
 	cnx.dump_time("encode_begin", frame_index, encode_begin, stream_idx);
 	cnx.dump_time("encode_end", frame_index, os_monotonic_get_ns(), stream_idx);

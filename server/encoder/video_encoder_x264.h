@@ -38,6 +38,7 @@ class video_encoder_x264 : public video_encoder
 
 	x264_picture_t pic_out = {};
 	bool rgba_input = false;
+	bool external_alpha_input = false;
 
 	struct in_t
 	{
@@ -62,13 +63,16 @@ class video_encoder_x264 : public video_encoder
 	std::list<pending_nal> pending_nals;
 	uint64_t encode_log_count = 0;
 	uint64_t rgba_debug_log_count = 0;
+	std::array<buffer_allocation *, 2> external_alpha_sources = {};
 
 public:
 	video_encoder_x264(wivrn_vk_bundle & vk, const encoder_settings & settings, uint8_t stream_idx);
 
 	std::pair<bool, vk::Semaphore> present_image(vk::Image y_cbcr, bool transferred, vk::raii::CommandBuffer & cmd_buf, uint8_t slot, uint64_t frame_index) override;
 
+	void prepare_for_encode(uint8_t slot, uint64_t frame_index) override;
 	std::optional<data> encode(uint8_t slot, uint64_t frame_index) override;
+	void set_external_alpha_sources(buffer_allocation * left, buffer_allocation * right);
 
 	~video_encoder_x264();
 
@@ -79,6 +83,7 @@ private:
 
 	void InsertInPendingNal(pending_nal && nal);
 	void convert_rgba_to_nv12(uint8_t slot);
+	void prepare_external_alpha_rgba(uint8_t slot);
 };
 
 } // namespace wivrn

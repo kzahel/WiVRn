@@ -61,6 +61,7 @@ struct pseudo_swapchain
 		image_allocation image;
 		vk::raii::ImageView image_view_y = nullptr;
 		vk::raii::ImageView image_view_cbcr = nullptr;
+		std::array<buffer_allocation, 2> apple_alpha_rgba = {};
 		status_t status;
 	};
 	std::vector<item> images;

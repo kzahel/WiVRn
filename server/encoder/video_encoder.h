@@ -145,6 +145,8 @@ public:
 	                                                     uint64_t frame_index) = 0;
 	// called after command buffer passed in present_image was submitted
 	virtual void post_submit(uint8_t slot) {}
+	// called after GPU work is complete and before encode(slot, frame_index)
+	virtual void prepare_for_encode(uint8_t slot, uint64_t frame_index) {}
 	// called when command buffer finished executing
 	virtual std::optional<data> encode(uint8_t slot, uint64_t frame_index) = 0;
 

@@ -121,6 +121,10 @@ video_encoder_x264::video_encoder_x264(
 	if (settings.codec != h264)
 		U_LOG_W("requested x264 encoder with codec != h264");
 
+#if defined(__APPLE__)
+	external_alpha_input = rgba_input && stream_idx == 2;
+#endif
+
 	// encoder requires width and height to be even
 	chroma_width = extent.width / 2;
 
@@ -215,6 +219,11 @@ video_encoder_x264::video_encoder_x264(
 
 std::pair<bool, vk::Semaphore> video_encoder_x264::present_image(vk::Image y_cbcr, bool transferred, vk::raii::CommandBuffer & cmd_buf, uint8_t slot, uint64_t)
 {
+	if (external_alpha_input)
+	{
+		return {false, nullptr};
+	}
+
 	if (rgba_input)
 	{
 		cmd_buf.copyImageToBuffer(
@@ -269,6 +278,23 @@ std::pair<bool, vk::Semaphore> video_encoder_x264::present_image(vk::Image y_cbc
 	                        .depth = 1,
 	                }});
 	return {false, nullptr};
+}
+
+void video_encoder_x264::set_external_alpha_sources(buffer_allocation * left, buffer_allocation * right)
+{
+	if (!external_alpha_input)
+		return;
+
+	external_alpha_sources = {left, right};
+}
+
+void video_encoder_x264::prepare_for_encode(uint8_t slot, uint64_t frame_index)
+{
+	(void)frame_index;
+	if (!external_alpha_input)
+		return;
+
+	prepare_external_alpha_rgba(slot);
 }
 
 void video_encoder_x264::convert_rgba_to_nv12(uint8_t slot)
@@ -353,6 +379,61 @@ void video_encoder_x264::convert_rgba_to_nv12(uint8_t slot)
 			        unsigned(uv_plane[center_uv_index + 0]),
 			        unsigned(uv_plane[center_uv_index + 1]),
 			        sampled_luma_count == 0 ? 0u : sampled_luma_sum / sampled_luma_count);
+		}
+	}
+}
+
+void video_encoder_x264::prepare_external_alpha_rgba(uint8_t slot)
+{
+	auto * dst = static_cast<uint8_t *>(in[slot].rgba.map());
+	const uint32_t output_width = extent.width;
+	const uint32_t output_height = extent.height;
+	const uint32_t eye_output_width = output_width / 2;
+	const uint32_t source_width = output_width;
+	const uint32_t source_height = output_height * 2;
+
+	if (!external_alpha_sources[0] || !external_alpha_sources[1])
+	{
+		throw std::runtime_error("Apple alpha stream missing RGBA sources");
+	}
+
+	auto sample_alpha = [&](const uint8_t * src, uint32_t x, uint32_t y) {
+		const size_t pixel_index = (size_t(y) * source_width + x) * 4 + 3;
+		return src[pixel_index];
+	};
+
+	std::array<const uint8_t *, 2> sources = {
+	        external_alpha_sources[0]->data<uint8_t>(),
+	        external_alpha_sources[1]->data<uint8_t>(),
+	};
+
+	for (uint32_t y = 0; y < output_height; ++y)
+	{
+		for (uint32_t x = 0; x < output_width; ++x)
+		{
+			const uint32_t eye = x >= eye_output_width ? 1u : 0u;
+			const uint32_t eye_x = eye == 0 ? x : x - eye_output_width;
+			const uint32_t src_x = std::min(source_width - 1, eye_x * 2);
+			const uint32_t src_y = std::min(source_height - 1, y * 2);
+
+			uint32_t alpha_sum = 0;
+			for (uint32_t dy = 0; dy < 2; ++dy)
+			{
+				for (uint32_t dx = 0; dx < 2; ++dx)
+				{
+					alpha_sum += sample_alpha(
+					        sources[eye],
+					        std::min(source_width - 1, src_x + dx),
+					        std::min(source_height - 1, src_y + dy));
+				}
+			}
+
+			const uint8_t alpha = uint8_t(alpha_sum / 4);
+			const size_t dst_index = (size_t(y) * output_width + x) * 4;
+			dst[dst_index + 0] = alpha;
+			dst[dst_index + 1] = alpha;
+			dst[dst_index + 2] = alpha;
+			dst[dst_index + 3] = 255;
 		}
 	}
 }
