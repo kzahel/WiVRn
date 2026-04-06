@@ -38,6 +38,9 @@
 #include "ffmpeg/video_encoder_va.h"
 #include <libavutil/ffversion.h>
 #endif
+#if WIVRN_USE_VIDEOTOOLBOX
+#include "video_encoder_videotoolbox.h"
+#endif
 
 namespace wivrn
 {
@@ -50,7 +53,7 @@ bool uses_two_layer_apple_software_path(const std::array<wivrn::encoder_settings
 {
 #if defined(__APPLE__)
 	return std::ranges::all_of(encoders, [](const auto & encoder) {
-		return encoder.encoder_name == encoder_x264;
+		return encoder.encoder_name == encoder_x264 || encoder.encoder_name == encoder_videotoolbox;
 	});
 #else
 	(void)encoders;
@@ -280,6 +283,16 @@ public:
 			{
 				if (check_vaapi(codec))
 					return {encoder_vaapi, codec};
+			}
+		}
+#endif
+#if WIVRN_USE_VIDEOTOOLBOX
+		if (config.name.empty() or config.name == encoder_videotoolbox)
+		{
+			for (auto codec: config.codec ? std::vector{*config.codec} : info.supported_codecs)
+			{
+				if (video_encoder_videotoolbox::supports(codec))
+					return {encoder_videotoolbox, codec};
 			}
 		}
 #endif

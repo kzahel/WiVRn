@@ -35,6 +35,9 @@
 #if WIVRN_USE_VAAPI
 #include "ffmpeg/video_encoder_va.h"
 #endif
+#if WIVRN_USE_VIDEOTOOLBOX
+#include "video_encoder_videotoolbox.h"
+#endif
 #if WIVRN_USE_X264
 #include "video_encoder_x264.h"
 #endif
@@ -46,6 +49,19 @@
 
 namespace wivrn
 {
+
+static const char *
+codec_name(video_codec codec)
+{
+	switch (codec)
+	{
+		case video_codec::h264: return "h264";
+		case video_codec::h265: return "h265";
+		case video_codec::av1: return "av1";
+		case video_codec::raw: return "raw";
+	}
+	return "unknown";
+}
 
 video_encoder::sender::sender() :
         thread([this](std::stop_token t) {
@@ -136,6 +152,14 @@ std::unique_ptr<video_encoder> video_encoder::create(
 		throw std::runtime_error("x264 encoder not enabled");
 #endif
 	}
+	if (settings.encoder_name == encoder_videotoolbox)
+	{
+#if WIVRN_USE_VIDEOTOOLBOX
+		res = std::make_unique<video_encoder_videotoolbox>(wivrn_vk, settings, stream_idx);
+#else
+		throw std::runtime_error("VideoToolbox encoder not enabled");
+#endif
+	}
 	if (settings.encoder_name == encoder_nvenc)
 	{
 #if WIVRN_USE_NVENC
@@ -160,6 +184,14 @@ std::unique_ptr<video_encoder> video_encoder::create(
 
 	if (not res)
 		throw std::runtime_error("Failed to create encoder " + settings.encoder_name);
+
+	U_LOG_I("Creating stream %u encoder: %s (%s %ux%u @ %.1f Mbps)",
+	        stream_idx,
+	        settings.encoder_name.c_str(),
+	        codec_name(settings.codec),
+	        settings.width,
+	        settings.height,
+	        settings.bitrate / 1'000'000.f);
 
 	auto wivrn_dump_video = std::getenv("WIVRN_DUMP_VIDEO");
 	if (wivrn_dump_video)

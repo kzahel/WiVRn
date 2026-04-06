@@ -22,6 +22,9 @@
 
 #include "driver/wivrn_session.h"
 #include "encoder/video_encoder.h"
+#if WIVRN_USE_VIDEOTOOLBOX
+#include "encoder/video_encoder_videotoolbox.h"
+#endif
 #include "encoder/video_encoder_x264.h"
 #include "util/u_logging.h"
 #include "utils/method.h"
@@ -781,9 +784,20 @@ VkResult wivrn_comp_target::present(
 		if (uses_apple_rgba_path && encoder->stream_idx == 2)
 		{
 			auto * x264 = dynamic_cast<video_encoder_x264 *>(encoder.get());
-			if (x264 == nullptr)
-				throw std::runtime_error("Apple alpha extraction requires x264 stream 2 encoder");
-			x264->set_external_alpha_sources(&psc_image.apple_alpha_rgba[0], &psc_image.apple_alpha_rgba[1]);
+			if (x264 != nullptr)
+			{
+				x264->set_external_alpha_sources(&psc_image.apple_alpha_rgba[0], &psc_image.apple_alpha_rgba[1]);
+			}
+#if WIVRN_USE_VIDEOTOOLBOX
+			else if (auto * videotoolbox = dynamic_cast<video_encoder_videotoolbox *>(encoder.get()))
+			{
+				videotoolbox->set_external_alpha_sources(&psc_image.apple_alpha_rgba[0], &psc_image.apple_alpha_rgba[1]);
+			}
+#endif
+			else
+			{
+				throw std::runtime_error("Apple alpha extraction requires an Apple RGBA-compatible stream 2 encoder");
+			}
 		}
 		if (settings[0].rgba_input && encoder->stream_idx < 2)
 		{
