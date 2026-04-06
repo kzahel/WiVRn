@@ -183,15 +183,16 @@ VkResult wivrn_comp_target::create_images_impl(vk::ImageUsageFlags flags)
 
 	destroy_images();
 
-	auto format = vk::Format(this->format);
+	const auto view_format = vk::Format(this->format);
 	bool rgba_target = settings[0].rgba_input;
+	const auto storage_format = rgba_target ? vk::Format::eR8G8B8A8Unorm : view_format;
 
-	bool is_10bit = format == vk::Format::eG10X6B10X6R10X62Plane420Unorm3Pack16;
+	bool is_10bit = view_format == vk::Format::eG10X6B10X6R10X62Plane420Unorm3Pack16;
 
 	std::array formats = {
-	        rgba_target ? format : (is_10bit ? vk::Format::eR16Unorm : vk::Format::eR8Unorm),
-	        rgba_target ? format : (is_10bit ? vk::Format::eR16G16Unorm : vk::Format::eR8G8Unorm),
-	        format};
+	        rgba_target ? storage_format : (is_10bit ? vk::Format::eR16Unorm : vk::Format::eR8Unorm),
+	        rgba_target ? view_format : (is_10bit ? vk::Format::eR16G16Unorm : vk::Format::eR8G8Unorm),
+	        rgba_target ? view_format : view_format};
 
 	images = U_TYPED_ARRAY_CALLOC(comp_target_image, image_count);
 
@@ -199,7 +200,7 @@ VkResult wivrn_comp_target::create_images_impl(vk::ImageUsageFlags flags)
 	        vk::ImageCreateInfo{
 	                .flags = vk::ImageCreateFlagBits::eExtendedUsage | vk::ImageCreateFlagBits::eMutableFormat,
 	                .imageType = vk::ImageType::e2D,
-	                .format = format,
+	                .format = storage_format,
 	                .extent = {
 	                        .width = width,
 	                        .height = height,
@@ -245,26 +246,65 @@ VkResult wivrn_comp_target::create_images_impl(vk::ImageUsageFlags flags)
 	for (uint32_t i = 0; i < image_count; i++)
 	{
 		auto & item = psc.images[i];
-		vk::ImageViewUsageCreateInfo usage{
-		        .usage = flags,
-		};
-		item.image_view_y = vk::raii::ImageView(device,
-		                                        {
-		                                                .pNext = &usage,
-		                                                .image = item.image,
-		                                                .viewType = vk::ImageViewType::e2DArray,
-		                                                .format = formats[0],
-		                                                .subresourceRange = {
-		                                                        .aspectMask = rgba_target ? vk::ImageAspectFlagBits::eColor : vk::ImageAspectFlagBits::ePlane0,
-		                                                        .levelCount = 1,
-		                                                        .layerCount = vk::RemainingArrayLayers,
-		                                                },
-		                                        });
-		if (!rgba_target)
+		if (rgba_target)
 		{
+			vk::ImageViewUsageCreateInfo storage_usage{
+			        .usage = flags | vk::ImageUsageFlagBits::eStorage,
+			};
+			item.image_view_storage = vk::raii::ImageView(device,
+			                                              {
+			                                                      .pNext = &storage_usage,
+			                                                      .image = item.image,
+			                                                      .viewType = vk::ImageViewType::e2DArray,
+			                                                      .format = storage_format,
+			                                                      .subresourceRange = {
+			                                                              .aspectMask = vk::ImageAspectFlagBits::eColor,
+			                                                              .levelCount = 1,
+			                                                              .layerCount = vk::RemainingArrayLayers,
+			                                                      },
+			                                              });
+			if (view_format != storage_format)
+			{
+				vk::ImageUsageFlags sample_usage = flags & ~vk::ImageUsageFlagBits::eStorage;
+				if (sample_usage == vk::ImageUsageFlags{})
+					sample_usage = vk::ImageUsageFlagBits::eSampled;
+				vk::ImageViewUsageCreateInfo srgb_usage{
+				        .usage = sample_usage,
+				};
+				item.image_view_srgb = vk::raii::ImageView(device,
+				                                           {
+				                                                   .pNext = &srgb_usage,
+				                                                   .image = item.image,
+				                                                   .viewType = vk::ImageViewType::e2DArray,
+				                                                   .format = view_format,
+				                                                   .subresourceRange = {
+				                                                           .aspectMask = vk::ImageAspectFlagBits::eColor,
+				                                                           .levelCount = 1,
+				                                                           .layerCount = vk::RemainingArrayLayers,
+				                                                   },
+				                                           });
+			}
+		}
+		else
+		{
+			vk::ImageViewUsageCreateInfo plane_usage{
+			        .usage = flags | vk::ImageUsageFlagBits::eStorage,
+			};
+			item.image_view_y = vk::raii::ImageView(device,
+			                                        {
+			                                                .pNext = &plane_usage,
+			                                                .image = item.image,
+			                                                .viewType = vk::ImageViewType::e2DArray,
+			                                                .format = formats[0],
+			                                                .subresourceRange = {
+			                                                        .aspectMask = vk::ImageAspectFlagBits::ePlane0,
+			                                                        .levelCount = 1,
+			                                                        .layerCount = vk::RemainingArrayLayers,
+			                                                },
+			                                        });
 			item.image_view_cbcr = vk::raii::ImageView(device,
 			                                           {
-			                                                   .pNext = &usage,
+			                                                   .pNext = &plane_usage,
 			                                                   .image = item.image,
 			                                                   .viewType = vk::ImageViewType::e2DArray,
 			                                                   .format = formats[1],
@@ -275,9 +315,19 @@ VkResult wivrn_comp_target::create_images_impl(vk::ImageUsageFlags flags)
 			                                                   },
 			                                           });
 		}
-		images[i].view = VkImageView(*item.image_view_y);
+		const bool has_srgb_view = item.image_view_srgb != nullptr;
+		images[i].view = rgba_target ? (has_srgb_view ? VkImageView(*item.image_view_srgb)
+		                                              : VkImageView(*item.image_view_storage))
+		                             : VkImageView(*item.image_view_y);
+		images[i].storage_view =
+		        rgba_target ? VkImageView(*item.image_view_storage) : VkImageView(*item.image_view_y);
 		images[i].view_cbcr = rgba_target ? VK_NULL_HANDLE : VkImageView(*item.image_view_cbcr);
-		wivrn_bundle->name(item.image_view_y, "comp target image view (y)");
+		if (rgba_target)
+			wivrn_bundle->name(item.image_view_storage, "comp target image view (storage)");
+		else
+			wivrn_bundle->name(item.image_view_y, "comp target image view (y/storage)");
+		if (rgba_target && has_srgb_view)
+			wivrn_bundle->name(item.image_view_srgb, "comp target image view (srgb)");
 		if (!rgba_target)
 			wivrn_bundle->name(item.image_view_cbcr, "comp target image view (CbCr)");
 	}
