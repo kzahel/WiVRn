@@ -726,8 +726,8 @@ VkResult wivrn_comp_target::present(
 	}
 
 	// Monado's compute compositor leaves the target image in PRESENT_SRC_KHR.
-	// Transition to TRANSFER_SRC_OPTIMAL before any copyImageToBuffer calls.
-	// Without this barrier, MoltenVK reads zeros from the wrong layout.
+	// Transition to TRANSFER_SRC_OPTIMAL before any copyImageToBuffer calls so
+	// encoder readback sees the compositor output from the correct Vulkan layout.
 	{
 		vk::ImageMemoryBarrier2 pre_transfer_barrier{
 		        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
