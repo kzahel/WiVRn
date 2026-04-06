@@ -672,6 +672,34 @@ VkResult wivrn_comp_target::present(
 		}
 	}
 
+	// Monado's compute compositor leaves the target image in PRESENT_SRC_KHR.
+	// Transition to TRANSFER_SRC_OPTIMAL before any copyImageToBuffer calls.
+	// Without this barrier, MoltenVK reads zeros from the wrong layout.
+	{
+		vk::ImageMemoryBarrier2 pre_transfer_barrier{
+		        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+		        .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+		        .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+		        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+		        .oldLayout = vk::ImageLayout::ePresentSrcKHR,
+		        .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+		        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		        .image = psc_image.image,
+		        .subresourceRange = {
+		                .aspectMask = vk::ImageAspectFlagBits::eColor,
+		                .baseMipLevel = 0,
+		                .levelCount = 1,
+		                .baseArrayLayer = 0,
+		                .layerCount = vk::RemainingArrayLayers,
+		        },
+		};
+		command_buffer.pipelineBarrier2(vk::DependencyInfo{
+		        .imageMemoryBarrierCount = 1,
+		        .pImageMemoryBarriers = &pre_transfer_barrier,
+		});
+	}
+
 	bool need_queue_transfer = false;
 	std::vector<vk::Semaphore> present_done_sem;
 	if (uses_apple_rgba_path && do_alpha)
@@ -804,7 +832,19 @@ VkResult wivrn_comp_target::present(
 #endif
 
 	auto & view_info = psc.view_info;
+#if defined(__APPLE__)
+	// On macOS the Monado fork uses the stock identity distortion shader —
+	// the WiVRn foveation patch (0005) is not applied. Send identity
+	// foveation (single element = full dimension, 1:1 mapping) so the
+	// Quest client does not apply inverse foveation to an un-foveated image.
+	for (int eye = 0; eye < 2; ++eye)
+	{
+		view_info.foveation[eye].x = {uint16_t(width)};
+		view_info.foveation[eye].y = {uint16_t(height)};
+	}
+#else
 	view_info.foveation = foveation->get_parameters();
+#endif
 	view_info.display_time = cnx.get_offset().to_headset(info.predicted_display_time);
 	if (view_info.alpha != do_alpha)
 		pacer.reset();
