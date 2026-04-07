@@ -25,11 +25,8 @@
 #include "wivrn_ipc.h"
 #include "wivrn_packets.h"
 #include <algorithm>
-#include <arpa/inet.h>
 #include <chrono>
-#include <poll.h>
 #include <regex>
-#include <sys/socket.h>
 #include <variant>
 
 using namespace std::chrono_literals;
@@ -40,14 +37,41 @@ static void handle_event_from_main_loop(to_monado::disconnect) {}
 static void handle_event_from_main_loop(to_monado::set_bitrate) {}
 static void handle_event_from_main_loop(wivrn::to_headset::stream_tab_change) {}
 
+namespace
+{
+int
+last_socket_error()
+{
+#if defined(_WIN32)
+	return WSAGetLastError();
+#else
+	return errno;
+#endif
+}
+} // namespace
+
 static std::string clean_key(std::string key)
 {
-	static const std::regex header{"^-+BEGIN .*-+$", std::regex_constants::multiline};
-	static const std::regex footer{"^-+END .*-+$", std::regex_constants::multiline};
 	static const std::regex whitespace{"[[:space:]]"};
+	auto remove_pem_lines = [](const std::string & input) {
+		std::string output;
+		size_t start = 0;
+		while (start < input.size())
+		{
+			size_t end = input.find('\n', start);
+			if (end == std::string::npos)
+				end = input.size();
 
-	key = std::regex_replace(key, header, "");
-	key = std::regex_replace(key, footer, "");
+			std::string_view line{input.data() + start, end - start};
+			if (!line.starts_with("-----BEGIN ") && !line.starts_with("-----END "))
+				output.append(line);
+
+			start = end == input.size() ? end : end + 1;
+		}
+		return output;
+	};
+
+	key = remove_pem_lines(key);
 	key = std::regex_replace(key, whitespace, "");
 
 	return key;
@@ -73,7 +97,7 @@ void wivrn::wivrn_connection::init(std::stop_token stop_token, std::function<voi
 	socklen_t len = sizeof(server_address);
 	if (getsockname(control.get_fd(), (sockaddr *)&server_address, &len) < 0)
 	{
-		throw std::system_error(errno, std::system_category(), "Cannot get socket port");
+		throw std::system_error(last_socket_error(), std::system_category(), "Cannot get socket port");
 	}
 	int port = ntohs(((struct sockaddr_in6 *)&server_address)->sin6_port);
 
@@ -81,7 +105,7 @@ void wivrn::wivrn_connection::init(std::stop_token stop_token, std::function<voi
 	len = sizeof(client_address);
 	if (getpeername(control.get_fd(), (sockaddr *)&client_address, &len) < 0)
 	{
-		throw std::system_error(errno, std::system_category(), "Cannot get client address");
+		throw std::system_error(last_socket_error(), std::system_category(), "Cannot get client address");
 	}
 
 	if (configuration().tcp_only)
@@ -108,7 +132,7 @@ void wivrn::wivrn_connection::init(std::stop_token stop_token, std::function<voi
 
 			tick();
 
-			pollfd fds[3] = {};
+			wivrn_pollfd fds[3] = {};
 			if (allow_stream_socket)
 			{
 				fds[0].events = POLLIN;
@@ -120,9 +144,9 @@ void wivrn::wivrn_connection::init(std::stop_token stop_token, std::function<voi
 			fds[2].fd = wivrn_ipc_socket_monado->get_fd();
 
 			// Make sure tick() is called at least every 100ms
-			int r = ::poll(fds, std::size(fds), 100);
+			int r = wivrn_poll(fds, std::size(fds), 100);
 			if (r < 0)
-				throw std::system_error(errno, std::system_category());
+				throw std::system_error(last_socket_error(), std::system_category());
 
 			if (allow_stream_socket and (fds[0].revents & (POLLHUP | POLLERR)))
 				throw std::runtime_error("Error on stream socket");
@@ -295,21 +319,26 @@ void wivrn::wivrn_connection::reset(std::stop_token stop, TCP && tcp, std::funct
 
 void wivrn::wivrn_connection::shutdown()
 {
+#if defined(_WIN32)
+	constexpr int shutdown_both = SD_BOTH;
+#else
+	constexpr int shutdown_both = SHUT_RDWR;
+#endif
 	if (stream)
-		::shutdown(stream.get_fd(), SHUT_RDWR);
+		::shutdown(stream.get_fd(), shutdown_both);
 	if (control)
-		::shutdown(control.get_fd(), SHUT_RDWR);
+		::shutdown(control.get_fd(), shutdown_both);
 }
 
 std::optional<wivrn::from_headset::packets> wivrn::wivrn_connection::poll_control(int timeout)
 {
-	pollfd fds{};
+	wivrn_pollfd fds{};
 	fds.events = POLLIN;
 	fds.fd = control.get_fd();
 
-	int r = ::poll(&fds, 1, timeout);
+	int r = wivrn_poll(&fds, 1, timeout);
 	if (r < 0)
-		throw std::system_error(errno, std::system_category());
+		throw std::system_error(last_socket_error(), std::system_category());
 
 	if (r > 0 && (fds.revents & POLLIN))
 	{

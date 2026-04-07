@@ -434,21 +434,37 @@ add_subdirectory(tools)
 
 foreach(TARGET_NAME wivrn wivrn-server wivrn-dashboard wivrn-common wivrn-dissector wivrnctl)
     if(TARGET ${TARGET_NAME})
-        target_compile_options(${TARGET_NAME} PRIVATE
-            -fdiagnostics-color -Wall -Wextra -pedantic
-            -ffast-math
-            -Wundef
-            -Wno-missing-field-initializers
-            -Wno-unused-parameter
-            -Wno-comment
-            -Wno-unused-variable
-            -Wno-sign-compare
-            $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-volatile -Wno-array-bounds>
-            $<$<COMPILE_LANG_AND_ID:CXX,Clang>:-Wno-deprecated-volatile -Wno-unneeded-internal-declaration -Wno-c99-extensions -Wno-unused-private-field>
-        )
+        if(MSVC)
+            target_compile_options(${TARGET_NAME} PRIVATE
+                /W4
+                /fp:fast
+                /Zc:preprocessor
+                /utf-8
+                /wd4018  # sign/unsigned mismatch
+                /wd4100  # unused parameter
+                /wd4101  # unused local variable
+            )
 
-        if (WIVRN_WERROR)
-            target_compile_options(${TARGET_NAME} PRIVATE -Werror)
+            if (WIVRN_WERROR)
+                target_compile_options(${TARGET_NAME} PRIVATE /WX)
+            endif()
+        else()
+            target_compile_options(${TARGET_NAME} PRIVATE
+                -fdiagnostics-color -Wall -Wextra -pedantic
+                -ffast-math
+                -Wundef
+                -Wno-missing-field-initializers
+                -Wno-unused-parameter
+                -Wno-comment
+                -Wno-unused-variable
+                -Wno-sign-compare
+                $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-volatile -Wno-array-bounds>
+                $<$<COMPILE_LANG_AND_ID:CXX,Clang>:-Wno-deprecated-volatile -Wno-unneeded-internal-declaration -Wno-c99-extensions -Wno-unused-private-field>
+            )
+
+            if (WIVRN_WERROR)
+                target_compile_options(${TARGET_NAME} PRIVATE -Werror)
+            endif()
         endif()
 
     endif()

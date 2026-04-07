@@ -31,6 +31,7 @@
 #include <Eigen/Core>
 #include <Eigen/QR>
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <optional>
 #include <ranges>
@@ -53,14 +54,17 @@ public:
 	};
 
 	XrDuration window = 30'000'000; // time span of samples to use for extrapolation
-	float time_constant = 0.001;    // duration (s) to convert velocities into positions
+	float time_constant = 0.001f;   // duration (s) to convert velocities into positions
 
 private:
 	std::array<sample, stored_samples> data;
 
 public:
 	polynomial_interpolator() = default;
-	polynomial_interpolator(XrDuration window, float time_constant) : window(window), time_constant(time_constant) {}
+	polynomial_interpolator(XrDuration window, float time_constant) :
+	        window(window),
+	        time_constant(time_constant)
+	{}
 
 	void reset()
 	{
@@ -125,7 +129,8 @@ public:
 		Eigen::Matrix<float, 2 * stored_samples, polynomial_order + 1> A;
 		Eigen::Matrix<float, 2 * stored_samples, N> b;
 
-		const XrTime production_timestamp = std::ranges::max(data | std::ranges::views::transform(&sample::production_timestamp));
+		const XrTime production_timestamp =
+		        std::ranges::max(data | std::ranges::views::transform(&sample::production_timestamp));
 		// Maximum is the minimum of now + max_extrapolation_ns (outside of this function)
 		// and production_ts + 1.1 * max_extrapolation_ns
 		// This allows a small buffer so that polynomial extrapolation fills the gap of networking hiccups
@@ -143,16 +148,16 @@ public:
 			if (not sample.y)
 				continue;
 
-			int abs_Δt = std::abs(sample.timestamp - timestamp);
+			int abs_dt = std::abs(sample.timestamp - timestamp);
 
-			float weight = 1. / (1. + std::pow(abs_Δt / float(window), 3.));
+			float weight = 1.f / (1.f + std::pow(abs_dt / float(window), 3.f));
 
-			float Δt = (sample.timestamp - timestamp) * 1.e-9;
-			float Δtⁱ = 1;
+			float dt = (sample.timestamp - timestamp) * 1.e-9f;
+			float dt_power = 1.f;
 			for (int i = 0; i <= polynomial_order; ++i)
 			{
-				A(row, i) = weight * Δtⁱ;
-				Δtⁱ *= Δt;
+				A(row, i) = weight * dt_power;
+				dt_power *= dt;
 			}
 			b.template block<1, N>(row, 0) = *sample.y * weight;
 			row++;
@@ -161,11 +166,11 @@ public:
 			{
 				A(row, 0) = 0;
 
-				Δtⁱ = 1;
+				dt_power = 1.f;
 				for (int i = 1; i <= polynomial_order; ++i)
 				{
-					A(row, i) = weight * time_constant * i * Δtⁱ;
-					Δtⁱ *= Δt;
+					A(row, i) = weight * time_constant * i * dt_power;
+					dt_power *= dt;
 				}
 				b.template block<1, N>(row, 0) = *sample.dy * weight * time_constant;
 				row++;

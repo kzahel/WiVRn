@@ -30,6 +30,7 @@
 #include "xrt/xrt_defines.h"
 #include "xrt/xrt_results.h"
 #include "xrt_cast.h"
+#include <cstdio>
 #include <format>
 
 using namespace xrt::auxiliary::math;
@@ -118,9 +119,9 @@ wivrn_generic_tracker::wivrn_generic_tracker(int index, xrt_device * hmd, wivrn_
         cnx(cnx)
 {
 	auto unique_name = std::format("WiVRn Generic Tracker #{}", index + 1);
-	strlcpy(str, unique_name.c_str(), std::size(str));
+	std::snprintf(str, std::size(str), "%s", unique_name.c_str());
 	auto unique_serial = std::format("wivrn-{}", index + 1);
-	strlcpy(serial, unique_serial.c_str(), std::size(serial));
+	std::snprintf(serial, std::size(serial), "%s", unique_serial.c_str());
 
 	pose_input.name = XRT_INPUT_GENERIC_TRACKER_POSE;
 	pose_input.active = true;

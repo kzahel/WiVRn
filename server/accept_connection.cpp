@@ -27,8 +27,25 @@
 #include "wivrn_ipc.h"
 #include "wivrn_sockets.h"
 
+#if defined(_WIN32)
+using accept_pollfd = WSAPOLLFD;
+
+static int
+poll_accept_fds(accept_pollfd * fds, size_t count, int timeout_ms)
+{
+	return WSAPoll(fds, static_cast<ULONG>(count), timeout_ms);
+}
+#else
 #include <fcntl.h>
 #include <sys/poll.h>
+using accept_pollfd = pollfd;
+
+static int
+poll_accept_fds(accept_pollfd * fds, size_t count, int timeout_ms)
+{
+	return poll(fds, count, timeout_ms);
+}
+#endif
 
 extern "C" int headset_listen_socket = -1;
 
@@ -44,14 +61,15 @@ std::unique_ptr<wivrn::TCP> wivrn::accept_connection(wivrn_session & cnx, std::s
 		listen_fd = listener.get_fd();
 	}
 
-	pollfd fds[2]{
-	        {.fd = listen_fd, .events = POLLIN},
-	        {.fd = wivrn_ipc_socket_monado->get_fd(), .events = POLLIN},
-	};
+	accept_pollfd fds[2]{};
+	fds[0].fd = static_cast<decltype(accept_pollfd{}.fd)>(listen_fd);
+	fds[0].events = POLLIN;
+	fds[1].fd = static_cast<decltype(accept_pollfd{}.fd)>(wivrn_ipc_socket_monado->get_fd());
+	fds[1].events = POLLIN;
 
 	while (not stop.stop_requested())
 	{
-		if (poll(fds, std::size(fds), 100) < 0)
+		if (poll_accept_fds(fds, std::size(fds), 100) < 0)
 		{
 			perror("poll");
 			return {};
@@ -64,8 +82,12 @@ std::unique_ptr<wivrn::TCP> wivrn::accept_connection(wivrn_session & cnx, std::s
 			socklen_t addrlen = sizeof(addr);
 			int fd = ::accept(listen_fd, (sockaddr *)&addr, &addrlen);
 			if (fd < 0)
+#if defined(_WIN32)
+				throw std::system_error{WSAGetLastError(), std::system_category()};
+#else
 				throw std::system_error{errno, std::generic_category()};
 			fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
 			return std::make_unique<wivrn::TCP>(fd);
 		}
 

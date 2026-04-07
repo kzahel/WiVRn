@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -285,11 +286,54 @@ std::string to_iso8601(std::chrono::system_clock::time_point timestamp)
 
 std::optional<std::chrono::system_clock::time_point> from_iso8601(const std::string & timestamp)
 {
-	tm t;
-	if (strptime(timestamp.c_str(), "%FT%H:%M:%S%z", &t) == nullptr)
+	int year = 0;
+	int month = 0;
+	int day = 0;
+	int hour = 0;
+	int minute = 0;
+	int second = 0;
+	char sign = '+';
+	int offset_hours = 0;
+	int offset_minutes = 0;
+
+	if (std::sscanf(timestamp.c_str(),
+	                "%4d-%2d-%2dT%2d:%2d:%2d%c%2d%2d",
+	                &year,
+	                &month,
+	                &day,
+	                &hour,
+	                &minute,
+	                &second,
+	                &sign,
+	                &offset_hours,
+	                &offset_minutes) != 9)
 		return std::nullopt;
 
-	return std::chrono::system_clock::from_time_t(mktime(&t));
+	tm t{};
+	t.tm_year = year - 1900;
+	t.tm_mon = month - 1;
+	t.tm_mday = day;
+	t.tm_hour = hour;
+	t.tm_min = minute;
+	t.tm_sec = second;
+
+#if defined(_WIN32)
+	time_t utc_seconds = _mkgmtime(&t);
+#else
+	time_t utc_seconds = timegm(&t);
+#endif
+	if (utc_seconds == time_t(-1))
+		return std::nullopt;
+
+	int offset_seconds = (offset_hours * 60 + offset_minutes) * 60;
+	if (sign == '+')
+		utc_seconds -= offset_seconds;
+	else if (sign == '-')
+		utc_seconds += offset_seconds;
+	else
+		return std::nullopt;
+
+	return std::chrono::system_clock::from_time_t(utc_seconds);
 }
 
 std::vector<headset_key> known_keys()

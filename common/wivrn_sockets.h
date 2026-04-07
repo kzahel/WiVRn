@@ -166,6 +166,7 @@ public:
 	void connect(in6_addr address, int port);
 	void connect(in_addr address, int port);
 	void bind(sockaddr_in6 address);
+	void bind(sockaddr_in address);
 	void subscribe_multicast(in6_addr address);
 	void unsubscribe_multicast(in6_addr address);
 	void set_receive_buffer_size(int size);

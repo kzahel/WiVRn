@@ -23,14 +23,6 @@
 #include "util/u_logging.h"
 #include "utils/wivrn_vk_bundle.h"
 
-bool operator==(const GUID & l, const GUID & r)
-{
-	return l.Data1 == r.Data1 and
-	       l.Data2 == r.Data2 and
-	       l.Data3 == r.Data3 and
-	       std::ranges::equal(l.Data4, r.Data4);
-}
-
 #include <algorithm>
 #include <stdexcept>
 
@@ -72,6 +64,12 @@ bool operator==(const GUID & l, const GUID & r)
 namespace wivrn
 {
 
+static bool
+guid_equal(const GUID & lhs, const GUID & rhs)
+{
+	return !!IsEqualGUID(lhs, rhs);
+}
+
 static auto encode_guid(video_codec codec)
 {
 	switch (codec)
@@ -96,7 +94,8 @@ static void check_encode_guid_supported(std::shared_ptr<video_encoder_nvenc_shar
 	std::vector<GUID> encodeGUIDs(count);
 	NVENC_CHECK(shared_state->fn.nvEncGetEncodeGUIDs(session_handle, encodeGUIDs.data(), count, &count));
 
-	if (!std::ranges::contains(encodeGUIDs, encode_guid))
+	if (std::ranges::find_if(encodeGUIDs, [&](const GUID & guid) { return guid_equal(guid, encode_guid); }) ==
+	    encodeGUIDs.end())
 	{
 		throw std::runtime_error("nvenc: GPU doesn't support selected codec.");
 	}
@@ -110,7 +109,8 @@ static void check_preset_guid_supported(std::shared_ptr<video_encoder_nvenc_shar
 	std::vector<GUID> presetGUIDs(count);
 	NVENC_CHECK(shared_state->fn.nvEncGetEncodePresetGUIDs(session_handle, encode_guid, presetGUIDs.data(), count, &count));
 
-	if (!std::ranges::contains(presetGUIDs, preset_guid))
+	if (std::ranges::find_if(presetGUIDs, [&](const GUID & guid) { return guid_equal(guid, preset_guid); }) ==
+	    presetGUIDs.end())
 	{
 		throw std::runtime_error("nvenc: Internal error. GPU doesn't support selected encoder preset.");
 	}
@@ -124,7 +124,8 @@ static void check_profile_guid_supported(std::shared_ptr<video_encoder_nvenc_sha
 	std::vector<GUID> profileGUIDs(count);
 	NVENC_CHECK(shared_state->fn.nvEncGetEncodeProfileGUIDs(session_handle, encodeGUID, profileGUIDs.data(), count, &count));
 
-	if (!std::ranges::contains(profileGUIDs, profileGUID))
+	if (std::ranges::find_if(profileGUIDs, [&](const GUID & guid) { return guid_equal(guid, profileGUID); }) ==
+	    profileGUIDs.end())
 	{
 		throw std::runtime_error("nvenc: " + err_msg);
 	}
@@ -175,13 +176,17 @@ video_encoder_nvenc::video_encoder_nvenc(
 	auto encodeGUID = encode_guid(settings.codec);
 	check_encode_guid_supported(shared_state, session_handle, encodeGUID);
 
+#if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 	GUID presetGUID = NV_ENC_PRESET_P4_GUID;
 	check_preset_guid_supported(shared_state, session_handle, encodeGUID, presetGUID);
 
 	NV_ENC_TUNING_INFO tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
+#if defined(__GNUC__)
 #pragma GCC diagnostic pop
+#endif
 	NV_ENC_PRESET_CONFIG preset_config{
 	        .version = NV_ENC_PRESET_CONFIG_VER,
 	        .presetCfg = {

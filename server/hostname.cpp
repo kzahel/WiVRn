@@ -1,7 +1,17 @@
 #include "hostname.h"
 #include "wivrn_config.h"
 #include <limits.h>
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 #include "util/u_logging.h"
 
@@ -72,10 +82,20 @@ static std::string _hostname()
 	}
 #endif
 
-	char buf[HOST_NAME_MAX];
+	char buf[HOST_NAME_MAX]{};
+#if defined(_WIN32)
+	DWORD size = sizeof(buf);
+	if (GetComputerNameExA(ComputerNameDnsHostname, buf, &size) != 0 && buf[0] != '\0')
+		return buf;
+
+	size = sizeof(buf);
+	if (GetComputerNameA(buf, &size) != 0 && buf[0] != '\0')
+		return buf;
+#else
 	int code = gethostname(buf, sizeof(buf));
 	if (code == 0)
 		return buf;
+#endif
 
 	U_LOG_W("Failed to get hostname");
 	return "no-hostname";

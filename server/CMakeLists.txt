@@ -106,13 +106,18 @@ set(WIVRN_SERVER_CORE_SOURCES
 	driver/wivrn_fb_face2_tracker.cpp
 	driver/wivrn_htc_face_tracker.cpp
 	driver/wivrn_generic_tracker.cpp
-	driver/wivrn_foveation.cpp
 	driver/wivrn_session.cpp
 	driver/wivrn_connection.cpp
 	driver/xrt_cast.cpp
 
 	utils/wivrn_vk_bundle.cpp
 )
+
+if(WIN32)
+	list(APPEND WIVRN_SERVER_CORE_SOURCES driver/wivrn_foveation_windows.cpp)
+else()
+	list(APPEND WIVRN_SERVER_CORE_SOURCES driver/wivrn_foveation.cpp)
+endif()
 
 set(WIVRN_SERVER_SHELL_SOURCES
 	active_runtime.cpp
@@ -210,6 +215,10 @@ function(wivrn_configure_server_target target_name)
 			wivrn-external
 			nlohmann_json::nlohmann_json
 		)
+
+	if(WIN32)
+		target_link_libraries(${target_name} PRIVATE Ws2_32)
+	endif()
 
 	if(WIVRN_USE_APPLICATIONS)
 		target_link_libraries(${target_name} PRIVATE wivrn-common-server)

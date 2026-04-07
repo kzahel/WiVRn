@@ -25,7 +25,9 @@
 #if WIVRN_USE_VIDEOTOOLBOX
 #include "encoder/video_encoder_videotoolbox.h"
 #endif
+#if WIVRN_USE_X264
 #include "encoder/video_encoder_x264.h"
+#endif
 #include "util/u_logging.h"
 #include "utils/method.h"
 #include "utils/scoped_lock.h"
@@ -319,12 +321,8 @@ VkResult wivrn_comp_target::create_images_impl(vk::ImageUsageFlags flags)
 			                                           });
 		}
 		const bool has_srgb_view = item.image_view_srgb != nullptr;
-		images[i].view = rgba_target ? (has_srgb_view ? VkImageView(*item.image_view_srgb)
-		                                              : VkImageView(*item.image_view_storage))
-		                             : VkImageView(*item.image_view_y);
-		images[i].storage_view =
+		images[i].view =
 		        rgba_target ? VkImageView(*item.image_view_storage) : VkImageView(*item.image_view_y);
-		images[i].view_cbcr = rgba_target ? VK_NULL_HANDLE : VkImageView(*item.image_view_cbcr);
 		if (rgba_target)
 			wivrn_bundle->name(item.image_view_storage, "comp target image view (storage)");
 		else
@@ -436,7 +434,7 @@ void wivrn_comp_target::create_encoders()
 			        return run_present(stop_token, thread_index, std::move(params));
 		        });
 		std::string name = "encoder " + std::to_string(group);
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
 		(void)thread;
 		(void)name;
 #else
@@ -783,18 +781,23 @@ VkResult wivrn_comp_target::present(
 			continue;
 		if (uses_apple_rgba_path && encoder->stream_idx == 2)
 		{
+			bool configured_alpha_source = false;
+#if WIVRN_USE_X264
 			auto * x264 = dynamic_cast<video_encoder_x264 *>(encoder.get());
 			if (x264 != nullptr)
 			{
 				x264->set_external_alpha_sources(&psc_image.apple_alpha_rgba[0], &psc_image.apple_alpha_rgba[1]);
-			}
-#if WIVRN_USE_VIDEOTOOLBOX
-			else if (auto * videotoolbox = dynamic_cast<video_encoder_videotoolbox *>(encoder.get()))
-			{
-				videotoolbox->set_external_alpha_sources(&psc_image.apple_alpha_rgba[0], &psc_image.apple_alpha_rgba[1]);
+				configured_alpha_source = true;
 			}
 #endif
-			else
+#if WIVRN_USE_VIDEOTOOLBOX
+			if (auto * videotoolbox = dynamic_cast<video_encoder_videotoolbox *>(encoder.get()))
+			{
+				videotoolbox->set_external_alpha_sources(&psc_image.apple_alpha_rgba[0], &psc_image.apple_alpha_rgba[1]);
+				configured_alpha_source = true;
+			}
+#endif
+			if (!configured_alpha_source)
 			{
 				throw std::runtime_error("Apple alpha extraction requires an Apple RGBA-compatible stream 2 encoder");
 			}
@@ -964,7 +967,7 @@ void wivrn_comp_target::flush()
 		xrt_rect rect[] = {data.proj.v[0].sub.rect, data.proj.v[1].sub.rect};
 		xrt_fov fov[] = {data.proj.v[0].fov, data.proj.v[1].fov};
 		cmd = foveation->update_foveation_buffer(
-		        c->nr.distortion.buffer,
+		        foveation->get_gpu_buffer(),
 		        data.flip_y,
 		        rect,
 		        fov);
@@ -983,7 +986,7 @@ void wivrn_comp_target::flush()
 		         }},
 		};
 		cmd = foveation->update_foveation_buffer(
-		        c->nr.distortion.buffer,
+		        foveation->get_gpu_buffer(),
 		        false,
 		        rect,
 		        hmd->distortion.fov);

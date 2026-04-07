@@ -25,6 +25,7 @@
 #include <openssl/kdf.h>
 #include <openssl/params.h>
 #include <openssl/pem.h>
+#include <array>
 #include <stdexcept>
 #include <string>
 

@@ -38,6 +38,7 @@
 #include "wivrn_comp_target.h"
 #include "wivrn_config.h"
 #include "wivrn_eye_tracker.h"
+#include <cstdio>
 #include "wivrn_fb_face2_tracker.h"
 #include "wivrn_foveation.h"
 #include "wivrn_generic_tracker.h"
@@ -274,7 +275,11 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
 	if (auto system_name = get_info().system_name; !system_name.empty())
 	{
 		system_name += " on WiVRn";
-		strlcpy(xrt_system.base.properties.name, system_name.c_str(), std::size(xrt_system.base.properties.name));
+		std::snprintf(
+		        xrt_system.base.properties.name,
+		        std::size(xrt_system.base.properties.name),
+		        "%s",
+		        system_name.c_str());
 	}
 
 #if WIVRN_USE_UINPUT

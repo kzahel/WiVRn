@@ -411,6 +411,12 @@ void wivrn::UDP::bind(sockaddr_in6 address)
 		throw_last_socket_error();
 }
 
+void wivrn::UDP::bind(sockaddr_in address)
+{
+	if (::bind(fd, (sockaddr *)&address, sizeof(address)) < 0)
+		throw_last_socket_error();
+}
+
 void wivrn::UDP::connect(in6_addr address, int port)
 {
 	sockaddr_in6 sa;
@@ -1053,23 +1059,34 @@ std::pair<wivrn::UDP, wivrn::UDP> wivrn::make_local_datagram_pair()
 #else
 	ensure_socket_runtime();
 
-	UDP first;
-	UDP second;
+	SOCKET first_fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (first_fd == INVALID_SOCKET)
+		throw_last_socket_error();
 
-	sockaddr_in6 first_addr{};
-	first_addr.sin6_family = AF_INET6;
-	first_addr.sin6_addr = in6addr_loopback;
-	first_addr.sin6_port = 0;
+	SOCKET second_fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (second_fd == INVALID_SOCKET)
+	{
+		closesocket(first_fd);
+		throw_last_socket_error();
+	}
+
+	UDP first(static_cast<int>(first_fd));
+	UDP second(static_cast<int>(second_fd));
+
+	sockaddr_in first_addr{};
+	first_addr.sin_family = AF_INET;
+	first_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	first_addr.sin_port = 0;
 	first.bind(first_addr);
 
-	sockaddr_in6 second_addr{};
-	second_addr.sin6_family = AF_INET6;
-	second_addr.sin6_addr = in6addr_loopback;
-	second_addr.sin6_port = 0;
+	sockaddr_in second_addr{};
+	second_addr.sin_family = AF_INET;
+	second_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	second_addr.sin_port = 0;
 	second.bind(second_addr);
 
-	sockaddr_in6 first_bound{};
-	sockaddr_in6 second_bound{};
+	sockaddr_in first_bound{};
+	sockaddr_in second_bound{};
 	int first_len = sizeof(first_bound);
 	int second_len = sizeof(second_bound);
 	if (getsockname(first.get_fd(), reinterpret_cast<sockaddr *>(&first_bound), &first_len) < 0)
@@ -1077,8 +1094,8 @@ std::pair<wivrn::UDP, wivrn::UDP> wivrn::make_local_datagram_pair()
 	if (getsockname(second.get_fd(), reinterpret_cast<sockaddr *>(&second_bound), &second_len) < 0)
 		throw_last_socket_error();
 
-	first.connect(second_bound.sin6_addr, ntohs(second_bound.sin6_port));
-	second.connect(first_bound.sin6_addr, ntohs(first_bound.sin6_port));
+	first.connect(second_bound.sin_addr, ntohs(second_bound.sin_port));
+	second.connect(first_bound.sin_addr, ntohs(first_bound.sin_port));
 
 	return {std::move(first), std::move(second)};
 #endif
