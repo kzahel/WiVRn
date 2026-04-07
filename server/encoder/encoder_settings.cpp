@@ -331,9 +331,19 @@ std::array<encoder_settings, 3> get_encoder_settings(wivrn_vk_bundle & bundle, c
 		std::tie(dst.encoder_name, dst.codec) = prober.select_encoder(src);
 
 		auto [it, inserted] = groups.emplace(dst.encoder_name, next_group);
-		dst.group = it->second;
-		if (inserted)
-			++next_group;
+		if (dst.encoder_name == encoder_videotoolbox)
+		{
+			// Each VT encoder gets its own thread so both eyes encode
+			// in parallel — VTCompressionSessionEncodeFrame is thread-safe
+			// and each encoder has its own session.
+			dst.group = next_group++;
+		}
+		else
+		{
+			dst.group = it->second;
+			if (inserted)
+				++next_group;
+		}
 	}
 
 	auto width = align(info.stream_eye_width, 64);
