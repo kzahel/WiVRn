@@ -125,15 +125,17 @@ video_encoder_videotoolbox::video_encoder_videotoolbox(
 
 	const void * encoder_keys[] = {
 	        kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
+	        kVTVideoEncoderSpecification_EnableLowLatencyRateControl,
 	};
 	const void * encoder_values[] = {
+	        kCFBooleanTrue,
 	        kCFBooleanTrue,
 	};
 	CFDictionaryRef encoder_specification = CFDictionaryCreate(
 	        kCFAllocatorDefault,
 	        encoder_keys,
 	        encoder_values,
-	        1,
+	        2,
 	        &kCFTypeDictionaryKeyCallBacks,
 	        &kCFTypeDictionaryValueCallBacks);
 
