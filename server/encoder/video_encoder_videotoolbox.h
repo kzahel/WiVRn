@@ -3,10 +3,8 @@
 #include "video_encoder.h"
 #include "vk/allocation.h"
 
-#include <Accelerate/Accelerate.h>
 #include <condition_variable>
 #include <cstdint>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -17,8 +15,6 @@
 
 namespace wivrn
 {
-
-class apple_vulkan_metal_bridge;
 
 class video_encoder_videotoolbox : public video_encoder
 {
@@ -41,24 +37,14 @@ class video_encoder_videotoolbox : public video_encoder
 	{
 		buffer_allocation rgba;
 		CVPixelBufferRef pixel_buffer = nullptr;
-		VkImage source_image = VK_NULL_HANDLE;
-		int64_t source_copy_ns = 0;
 	};
 
 	VTCompressionSessionRef session = nullptr;
 	std::array<in_t, num_slots> in;
-	bool rgba_input = false;
 	bool external_alpha_input = false;
-	bool bgra_input = false;
-	bool direct_rgba_input = false;
-	bool gpu_bridge_enabled = false;
-	bool vimage_nv12_conversion = false;
-	uint64_t rgba_debug_log_count = 0;
 	std::array<buffer_allocation *, 2> external_alpha_sources = {};
-	vImage_ARGBToYpCbCr vimage_argb_to_ycbcr = {};
 	CMTime next_pts = kCMTimeZero;
 	CMTime frame_duration = kCMTimeInvalid;
-	std::unique_ptr<apple_vulkan_metal_bridge> gpu_bridge;
 
 public:
 	static bool supports(video_codec codec);
@@ -89,8 +75,7 @@ private:
 	void configure_session(const encoder_settings & settings);
 	void update_frame_rate(float fps);
 	void update_bitrate(uint32_t bitrate_bps);
-	void copy_rgba_to_pixel_buffer(uint8_t slot, CVPixelBufferRef pixel_buffer);
-	void convert_rgba_to_nv12(uint8_t slot, CVPixelBufferRef pixel_buffer);
+	void copy_rgba_to_bgra_pixel_buffer(uint8_t slot, CVPixelBufferRef pixel_buffer);
 	void prepare_external_alpha_rgba(uint8_t slot);
 	CVPixelBufferRef create_source_pixel_buffer(OSType pixel_format);
 };

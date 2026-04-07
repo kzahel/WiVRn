@@ -3,17 +3,14 @@
 #include "encoder_settings.h"
 #include "os/os_time.h"
 #include "util/u_logging.h"
-#include "utils/apple_vulkan_metal_bridge.h"
 #include "utils/wivrn_vk_bundle.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstring>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
-#include <string_view>
 
 #include <CoreFoundation/CoreFoundation.h>
 
@@ -22,90 +19,10 @@ namespace wivrn
 namespace
 {
 bool
-log_apple_rgba_samples_enabled()
-{
-#if defined(__APPLE__)
-	static const bool enabled = std::getenv("WIVRN_LOG_APPLE_RGBA_SAMPLES") != nullptr;
-	return enabled;
-#else
-	return false;
-#endif
-}
-
-bool
 log_apple_host_timing_enabled()
 {
 #if defined(__APPLE__)
 	static const bool enabled = std::getenv("WIVRN_LOG_APPLE_HOST_TIMING") != nullptr;
-	return enabled;
-#else
-	return false;
-#endif
-}
-
-bool
-use_direct_rgba_input_enabled()
-{
-#if defined(__APPLE__)
-	static const bool enabled = []() {
-		const char * env = std::getenv("WIVRN_VT_SOURCE_FORMAT");
-		return env && std::string_view(env) == "rgba";
-	}();
-	return enabled;
-#else
-	return false;
-#endif
-}
-
-bool
-use_bgra_input_enabled()
-{
-#if defined(__APPLE__)
-	static const bool enabled = []() {
-		const char * env = std::getenv("WIVRN_VT_SOURCE_FORMAT");
-		if (!env)
-			return true;
-		return std::string_view(env) == "bgra";
-	}();
-	return enabled;
-#else
-	return false;
-#endif
-}
-
-bool
-use_vimage_nv12_conversion_enabled()
-{
-#if defined(__APPLE__)
-	static const bool enabled = []() {
-		const char * source_env = std::getenv("WIVRN_VT_SOURCE_FORMAT");
-		if (source_env)
-		{
-			const std::string_view value = source_env;
-			if (value == "rgba" || value == "bgra")
-				return false;
-		}
-		const char * env = std::getenv("WIVRN_VT_CONVERSION");
-		if (!env)
-			return true;
-		return std::string_view(env) != "scalar";
-	}();
-	return enabled;
-#else
-	return false;
-#endif
-}
-
-bool
-use_gpu_bridge_enabled()
-{
-#if defined(__APPLE__)
-	static const bool enabled = []() {
-		const char * env = std::getenv("WIVRN_VT_GPU_BRIDGE");
-		if (!env)
-			return true;
-		return std::string_view(env) != "0";
-	}();
 	return enabled;
 #else
 	return false;
@@ -131,25 +48,15 @@ osstatus_string(OSStatus status)
 }
 
 const char *
-source_format_name(bool bgra_input, bool direct_rgba_input)
+source_format_name()
 {
-	if (bgra_input)
-		return "BGRA";
-	if (direct_rgba_input)
-		return "RGBA";
-	return "NV12";
+	return "BGRA";
 }
 
 const char *
-source_conversion_name(bool bgra_input, bool direct_rgba_input, bool gpu_bridge_enabled, bool vimage_nv12_conversion)
+source_conversion_name()
 {
-	if (gpu_bridge_enabled)
-		return "metal-swizzle";
-	if (bgra_input)
-		return "swizzle";
-	if (direct_rgba_input)
-		return "copy";
-	return vimage_nv12_conversion ? "vimage" : "scalar";
+	return "cpu-readback-swizzle";
 }
 
 void
@@ -185,22 +92,14 @@ video_encoder_videotoolbox::video_encoder_videotoolbox(
         const encoder_settings & settings,
         uint8_t stream_idx) :
         video_encoder(stream_idx, settings, std::make_unique<default_idr_handler>(), true),
-        rgba_input(settings.rgba_input),
-        bgra_input(use_bgra_input_enabled()),
-        direct_rgba_input(use_direct_rgba_input_enabled()),
-        vimage_nv12_conversion(use_vimage_nv12_conversion_enabled()),
         frame_duration(make_frame_duration(settings.fps))
 {
 	if (settings.bit_depth != 8)
 		throw std::runtime_error("VideoToolbox encoder only supports 8-bit encoding");
 	if (settings.codec != h264)
 		throw std::runtime_error("VideoToolbox encoder currently only supports H.264");
-	if (!rgba_input)
+	if (!settings.rgba_input)
 		throw std::runtime_error("VideoToolbox encoder currently requires Apple RGBA input");
-	if (bgra_input && direct_rgba_input)
-		throw std::runtime_error("WIVRN_VT_SOURCE_FORMAT cannot be both bgra and rgba");
-	if ((direct_rgba_input || bgra_input) && vimage_nv12_conversion)
-		throw std::runtime_error("WIVRN_VT_SOURCE_FORMAT=rgba and WIVRN_VT_CONVERSION=vimage are mutually exclusive");
 
 #if defined(__APPLE__)
 	external_alpha_input = stream_idx == 2;
@@ -221,9 +120,7 @@ video_encoder_videotoolbox::video_encoder_videotoolbox(
 		        "videotoolbox rgba buffer");
 	}
 
-	const OSType pixel_format = direct_rgba_input ? kCVPixelFormatType_32RGBA :
-	                             bgra_input       ? kCVPixelFormatType_32BGRA :
-	                                               kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+	const OSType pixel_format = kCVPixelFormatType_32BGRA;
 	CFDictionaryRef source_attributes = create_source_attributes(extent.width, extent.height, pixel_format);
 
 	const void * encoder_keys[] = {
@@ -258,48 +155,10 @@ video_encoder_videotoolbox::video_encoder_videotoolbox(
 	if (create_status != noErr || session == nullptr)
 		throw std::runtime_error("Failed to create VideoToolbox compression session: " + osstatus_string(create_status));
 
+	// Keep one encoder-owned IOSurface-backed source buffer per slot so the
+	// current CPU staging path and the later GPU handoff share the same lifetime.
 	for (auto & slot: in)
 		slot.pixel_buffer = create_source_pixel_buffer(pixel_format);
-
-	if (bgra_input && !external_alpha_input && use_gpu_bridge_enabled())
-	{
-		std::array<CVPixelBufferRef, num_slots> pixel_buffers = {};
-		for (size_t slot = 0; slot < pixel_buffers.size(); ++slot)
-			pixel_buffers[slot] = in[slot].pixel_buffer;
-
-		if (apple_vulkan_metal_bridge::supported(vk))
-		{
-			gpu_bridge = std::make_unique<apple_vulkan_metal_bridge>(vk, extent, std::span(pixel_buffers));
-			gpu_bridge_enabled = true;
-		}
-		else
-		{
-			U_LOG_W("VideoToolbox stream %u GPU bridge unavailable, falling back to CPU BGRA swizzle", unsigned(stream_idx));
-		}
-	}
-
-	if (vimage_nv12_conversion)
-	{
-		vImage_YpCbCrPixelRange pixel_range = {
-		        .Yp_bias = 16,
-		        .CbCr_bias = 128,
-		        .YpRangeMax = 235,
-		        .CbCrRangeMax = 240,
-		        .YpMax = 255,
-		        .YpMin = 0,
-		        .CbCrMax = 255,
-		        .CbCrMin = 0,
-		};
-		vImage_Error vimage_status = vImageConvert_ARGBToYpCbCr_GenerateConversion(
-		        kvImage_ARGBToYpCbCrMatrix_ITU_R_601_4,
-		        &pixel_range,
-		        &vimage_argb_to_ycbcr,
-		        kvImageARGB8888,
-		        kvImage420Yp8_CbCr8,
-		        kvImageNoFlags);
-		if (vimage_status != kvImageNoError)
-			throw std::runtime_error("Failed to create vImage RGBA->NV12 conversion: " + std::to_string(vimage_status));
-	}
 
 	configure_session(settings);
 }
@@ -331,8 +190,8 @@ video_encoder_videotoolbox::configure_session(const encoder_settings & settings)
 	}
 	U_LOG_W("VideoToolbox stream %u source pixel format=%s conversion=%s",
 	        unsigned(stream_idx),
-	        source_format_name(bgra_input, direct_rgba_input),
-	        source_conversion_name(bgra_input, direct_rgba_input, gpu_bridge_enabled, vimage_nv12_conversion));
+	        source_format_name(),
+	        source_conversion_name());
 }
 
 CFDictionaryRef
@@ -413,11 +272,6 @@ video_encoder_videotoolbox::present_image(vk::Image y_cbcr, bool transferred, vk
 	(void)transferred;
 	if (external_alpha_input)
 		return {false, nullptr};
-	if (gpu_bridge_enabled)
-	{
-		in[slot].source_image = VkImage(y_cbcr);
-		return {false, nullptr};
-	}
 
 	cmd_buf.copyImageToBuffer(
 	        y_cbcr,
@@ -450,24 +304,6 @@ video_encoder_videotoolbox::set_external_alpha_sources(buffer_allocation * left,
 void
 video_encoder_videotoolbox::prepare_for_encode(uint8_t slot, uint64_t frame_index)
 {
-	if (gpu_bridge_enabled)
-	{
-		const bool log_host_timing = log_apple_host_timing_enabled();
-		const int64_t begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
-		gpu_bridge->copy_image_to_slot(in[slot].source_image, slot, stream_idx);
-		const int64_t end_ns = log_host_timing ? os_monotonic_get_ns() : 0;
-		in[slot].source_copy_ns = end_ns - begin_ns;
-		if (log_host_timing)
-		{
-			fprintf(stderr,
-			        "apple-vt frame=%llu stream=%u phase=metal_bridge duration_us=%lld\n",
-			        (unsigned long long)frame_index,
-			        unsigned(stream_idx),
-			        (long long)(in[slot].source_copy_ns / 1000));
-		}
-		return;
-	}
-
 	if (!external_alpha_input)
 		return;
 
@@ -638,145 +474,24 @@ video_encoder_videotoolbox::output_callback(void * output_callback_refcon,
 }
 
 void
-video_encoder_videotoolbox::copy_rgba_to_pixel_buffer(uint8_t slot, CVPixelBufferRef pixel_buffer)
+video_encoder_videotoolbox::copy_rgba_to_bgra_pixel_buffer(uint8_t slot, CVPixelBufferRef pixel_buffer)
 {
 	auto * rgba = static_cast<uint8_t *>(in[slot].rgba.map());
 	auto * dst = static_cast<uint8_t *>(CVPixelBufferGetBaseAddress(pixel_buffer));
 	const size_t dst_stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
 	const size_t src_stride = size_t(extent.width) * 4;
-	if (bgra_input)
-	{
-		for (uint32_t y = 0; y < extent.height; ++y)
-		{
-			const uint8_t * src_row = rgba + y * src_stride;
-			uint8_t * dst_row = dst + y * dst_stride;
-			for (uint32_t x = 0; x < extent.width; ++x)
-			{
-				const uint8_t * src = src_row + x * 4;
-				uint8_t * out = dst_row + x * 4;
-				out[0] = src[2];
-				out[1] = src[1];
-				out[2] = src[0];
-				out[3] = src[3];
-			}
-		}
-		return;
-	}
-
 	for (uint32_t y = 0; y < extent.height; ++y)
 	{
-		std::memcpy(dst + y * dst_stride, rgba + y * src_stride, src_stride);
-	}
-}
-
-void
-video_encoder_videotoolbox::convert_rgba_to_nv12(uint8_t slot, CVPixelBufferRef pixel_buffer)
-{
-	auto * rgba = static_cast<uint8_t *>(in[slot].rgba.map());
-	auto * y_plane = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 0));
-	auto * uv_plane = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 1));
-	const size_t y_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 0);
-	const size_t uv_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 1);
-
-	if (vimage_nv12_conversion)
-	{
-		static constexpr uint8_t rgba_permute_map[] = {3, 0, 1, 2};
-		vImage_Buffer src = {
-		        .data = rgba,
-		        .height = extent.height,
-		        .width = extent.width,
-		        .rowBytes = size_t(extent.width) * 4,
-		};
-		vImage_Buffer dest_y = {
-		        .data = y_plane,
-		        .height = CVPixelBufferGetHeightOfPlane(pixel_buffer, 0),
-		        .width = CVPixelBufferGetWidthOfPlane(pixel_buffer, 0),
-		        .rowBytes = y_stride,
-		};
-		vImage_Buffer dest_uv = {
-		        .data = uv_plane,
-		        .height = CVPixelBufferGetHeightOfPlane(pixel_buffer, 1),
-		        .width = CVPixelBufferGetWidthOfPlane(pixel_buffer, 1),
-		        .rowBytes = uv_stride,
-		};
-		vImage_Error err = vImageConvert_ARGB8888To420Yp8_CbCr8(
-		        &src,
-		        &dest_y,
-		        &dest_uv,
-		        &vimage_argb_to_ycbcr,
-		        rgba_permute_map,
-		        kvImageNoFlags);
-		if (err != kvImageNoError)
-			throw std::runtime_error("vImageConvert_ARGB8888To420Yp8_CbCr8 failed: " + std::to_string(err));
-		return;
-	}
-
-	for (uint32_t y = 0; y < extent.height; ++y)
-	{
-		auto * y_row = y_plane + y * y_stride;
+		const uint8_t * src_row = rgba + y * src_stride;
+		uint8_t * dst_row = dst + y * dst_stride;
 		for (uint32_t x = 0; x < extent.width; ++x)
 		{
-			const uint8_t * src = rgba + (y * extent.width + x) * 4;
-			int r = src[0];
-			int g = src[1];
-			int b = src[2];
-			int y_value = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-			y_row[x] = std::clamp(y_value, 0, 255);
-		}
-	}
-
-	for (uint32_t y = 0; y < extent.height; y += 2)
-	{
-		auto * uv_row = uv_plane + (y / 2) * uv_stride;
-		for (uint32_t x = 0; x < extent.width; x += 2)
-		{
-			int r_sum = 0;
-			int g_sum = 0;
-			int b_sum = 0;
-			for (uint32_t dy = 0; dy < 2; ++dy)
-			{
-				for (uint32_t dx = 0; dx < 2; ++dx)
-				{
-					const uint8_t * src = rgba + ((y + dy) * extent.width + (x + dx)) * 4;
-					r_sum += src[0];
-					g_sum += src[1];
-					b_sum += src[2];
-				}
-			}
-
-			int r = r_sum / 4;
-			int g = g_sum / 4;
-			int b = b_sum / 4;
-			int u_value = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
-			int v_value = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
-			uv_row[x + 0] = std::clamp(u_value, 0, 255);
-			uv_row[x + 1] = std::clamp(v_value, 0, 255);
-		}
-	}
-
-	if (log_apple_rgba_samples_enabled())
-	{
-		++rgba_debug_log_count;
-		if (rgba_debug_log_count <= 5 || rgba_debug_log_count % 120 == 0)
-		{
-			const size_t center_index = ((extent.height / 2) * extent.width + (extent.width / 2)) * 4;
-			const size_t center_y_index = (extent.height / 2) * y_stride + (extent.width / 2);
-			const size_t center_uv_index = (extent.height / 4) * uv_stride + (extent.width / 2 & ~1u);
-			fprintf(stderr,
-			        "apple-rgba-vt stream=%u rgba0=(%u,%u,%u,%u) rgbaC=(%u,%u,%u,%u) y0=%u yC=%u uvC=(%u,%u)\n",
-			        unsigned(stream_idx),
-			        unsigned(rgba[0]),
-			        unsigned(rgba[1]),
-			        unsigned(rgba[2]),
-			        unsigned(rgba[3]),
-			        unsigned(rgba[center_index + 0]),
-			        unsigned(rgba[center_index + 1]),
-			        unsigned(rgba[center_index + 2]),
-			        unsigned(rgba[center_index + 3]),
-			        unsigned(y_plane[0]),
-			        unsigned(y_plane[center_y_index]),
-			        unsigned(uv_plane[center_uv_index + 0]),
-			        unsigned(uv_plane[center_uv_index + 1]));
+			const uint8_t * src = src_row + x * 4;
+			uint8_t * out = dst_row + x * 4;
+			out[0] = src[2];
+			out[1] = src[1];
+			out[2] = src[0];
+			out[3] = src[3];
 		}
 	}
 }
@@ -877,24 +592,13 @@ video_encoder_videotoolbox::encode(uint8_t slot, uint64_t frame_index)
 	const int64_t pixel_buffer_end_ns = log_host_timing ? os_monotonic_get_ns() : 0;
 
 	OSStatus status = noErr;
-	const int64_t convert_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
-	int64_t convert_end_ns = convert_begin_ns;
-	if (!gpu_bridge_enabled)
-	{
-		status = CVPixelBufferLockBaseAddress(pixel_buffer, 0);
-		if (status != noErr)
-			throw std::runtime_error("Failed to lock VideoToolbox pixel buffer: " + osstatus_string(status));
-		if (direct_rgba_input || bgra_input)
-			copy_rgba_to_pixel_buffer(slot, pixel_buffer);
-		else
-			convert_rgba_to_nv12(slot, pixel_buffer);
-		convert_end_ns = log_host_timing ? os_monotonic_get_ns() : 0;
-		CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
-	}
-	else
-	{
-		convert_end_ns = convert_begin_ns;
-	}
+	const int64_t source_copy_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
+	status = CVPixelBufferLockBaseAddress(pixel_buffer, 0);
+	if (status != noErr)
+		throw std::runtime_error("Failed to lock VideoToolbox pixel buffer: " + osstatus_string(status));
+	copy_rgba_to_bgra_pixel_buffer(slot, pixel_buffer);
+	const int64_t source_copy_end_ns = log_host_timing ? os_monotonic_get_ns() : 0;
+	CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
 
 	auto request = std::make_shared<encode_request>();
 	request->frame_index = frame_index;
@@ -959,11 +663,11 @@ video_encoder_videotoolbox::encode(uint8_t slot, uint64_t frame_index)
 			        "encode_frame_us=%lld complete_frames_us=%lld wait_callback_us=%lld submit_to_callback_us=%lld total_us=%lld\n",
 			        (unsigned long long)frame_index,
 			        unsigned(stream_idx),
-			        bgra_input ? "bgra" : (direct_rgba_input ? "rgba" : "nv12"),
+			        "bgra",
 			        request->dropped ? 1 : 0,
 			        request->bitstream.size(),
 			        (long long)((pixel_buffer_end_ns - pixel_buffer_begin_ns) / 1000),
-			        (long long)((gpu_bridge_enabled ? in[slot].source_copy_ns : (convert_end_ns - convert_begin_ns)) / 1000),
+			        (long long)((source_copy_end_ns - source_copy_begin_ns) / 1000),
 			        (long long)((vt_encode_end_ns - vt_encode_begin_ns) / 1000),
 			        (long long)((complete_end_ns - complete_begin_ns) / 1000),
 			        (long long)((wait_end_ns - wait_begin_ns) / 1000),
@@ -980,12 +684,12 @@ video_encoder_videotoolbox::encode(uint8_t slot, uint64_t frame_index)
 		        "encode_frame_us=%lld complete_frames_us=%lld wait_callback_us=%lld submit_to_callback_us=%lld total_us=%lld\n",
 		        (unsigned long long)frame_index,
 		        unsigned(stream_idx),
-		        bgra_input ? "bgra" : (direct_rgba_input ? "rgba" : "nv12"),
+		        "bgra",
 		        request->dropped ? 1 : 0,
 		        request->bitstream.size(),
 		        request->control ? 1 : 0,
 		        (long long)((pixel_buffer_end_ns - pixel_buffer_begin_ns) / 1000),
-		        (long long)((gpu_bridge_enabled ? in[slot].source_copy_ns : (convert_end_ns - convert_begin_ns)) / 1000),
+		        (long long)((source_copy_end_ns - source_copy_begin_ns) / 1000),
 		        (long long)((vt_encode_end_ns - vt_encode_begin_ns) / 1000),
 		        (long long)((complete_end_ns - complete_begin_ns) / 1000),
 		        (long long)((wait_end_ns - wait_begin_ns) / 1000),
@@ -1003,7 +707,6 @@ video_encoder_videotoolbox::encode(uint8_t slot, uint64_t frame_index)
 
 video_encoder_videotoolbox::~video_encoder_videotoolbox()
 {
-	gpu_bridge.reset();
 	for (auto & slot: in)
 	{
 		if (slot.pixel_buffer != nullptr)
