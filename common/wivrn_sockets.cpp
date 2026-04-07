@@ -63,17 +63,17 @@ throw_last_socket_error()
 }
 
 void
-close_socket(int fd)
+close_socket(native_socket_t fd)
 {
 #if defined(_WIN32)
-	closesocket(static_cast<SOCKET>(fd));
+	closesocket(fd);
 #else
 	::close(fd);
 #endif
 }
 
 void
-set_close_on_exec(int fd)
+set_close_on_exec(native_socket_t fd)
 {
 #if !defined(_WIN32)
 	fcntl(fd, F_SETFD, FD_CLOEXEC);
@@ -84,7 +84,7 @@ set_close_on_exec(int fd)
 
 template <typename T>
 int
-set_socket_option(int fd, int level, int option, const T & value)
+set_socket_option(native_socket_t fd, int level, int option, const T & value)
 {
 #if defined(_WIN32)
 	return setsockopt(fd, level, option, reinterpret_cast<const char *>(&value), sizeof(value));
@@ -136,10 +136,18 @@ ensure_socket_runtime()
 	});
 }
 
+void
+enable_dual_stack_socket(native_socket_t fd)
+{
+	int disabled = 0;
+	if (set_socket_option(fd, IPPROTO_IPV6, IPV6_V6ONLY, disabled) == SOCKET_ERROR)
+		throw_last_socket_error();
+}
+
 class nonblocking_socket_guard
 {
 public:
-	nonblocking_socket_guard(int fd, int flags) :
+	nonblocking_socket_guard(native_socket_t fd, int flags) :
 	        fd(fd),
 	        active((flags & MSG_DONTWAIT) != 0)
 	{
@@ -147,7 +155,7 @@ public:
 			return;
 
 		u_long enabled = 1;
-		if (ioctlsocket(static_cast<SOCKET>(fd), FIONBIO, &enabled) == SOCKET_ERROR)
+		if (ioctlsocket(fd, FIONBIO, &enabled) == SOCKET_ERROR)
 		{
 			active = false;
 			throw_last_socket_error();
@@ -160,16 +168,16 @@ public:
 			return;
 
 		u_long disabled = 0;
-		ioctlsocket(static_cast<SOCKET>(fd), FIONBIO, &disabled);
+		ioctlsocket(fd, FIONBIO, &disabled);
 	}
 
 private:
-	int fd;
+	native_socket_t fd;
 	bool active;
 };
 
 int
-recvmsg(int fd, msghdr * msg, int flags)
+recvmsg(native_socket_t fd, msghdr * msg, int flags)
 {
 	nonblocking_socket_guard guard(fd, flags);
 
@@ -189,7 +197,7 @@ recvmsg(int fd, msghdr * msg, int flags)
 	if (msg->msg_name)
 	{
 		int name_length = msg->msg_namelen;
-		result = WSARecvFrom(static_cast<SOCKET>(fd),
+		result = WSARecvFrom(fd,
 		                     buffers.data(),
 		                     static_cast<DWORD>(buffers.size()),
 		                     &bytes_received,
@@ -202,7 +210,7 @@ recvmsg(int fd, msghdr * msg, int flags)
 	}
 	else
 	{
-		result = WSARecv(static_cast<SOCKET>(fd),
+		result = WSARecv(fd,
 		                 buffers.data(),
 		                 static_cast<DWORD>(buffers.size()),
 		                 &bytes_received,
@@ -222,7 +230,7 @@ recvmsg(int fd, msghdr * msg, int flags)
 }
 
 int
-sendmsg(int fd, const msghdr * msg, int)
+sendmsg(native_socket_t fd, const msghdr * msg, int)
 {
 	std::vector<WSABUF> buffers(msg->msg_iovlen);
 	for (size_t i = 0; i < msg->msg_iovlen; ++i)
@@ -235,7 +243,7 @@ sendmsg(int fd, const msghdr * msg, int)
 	int result = 0;
 	if (msg->msg_name)
 	{
-		result = WSASendTo(static_cast<SOCKET>(fd),
+		result = WSASendTo(fd,
 		                   buffers.data(),
 		                   static_cast<DWORD>(buffers.size()),
 		                   &bytes_sent,
@@ -247,7 +255,7 @@ sendmsg(int fd, const msghdr * msg, int)
 	}
 	else
 	{
-		result = WSASend(static_cast<SOCKET>(fd),
+		result = WSASend(fd,
 		                 buffers.data(),
 		                 static_cast<DWORD>(buffers.size()),
 		                 &bytes_sent,
@@ -266,7 +274,7 @@ sendmsg(int fd, const msghdr * msg, int)
 }
 
 ssize_t
-writev(int fd, const iovec * iov, int iovcnt)
+writev(native_socket_t fd, const iovec * iov, int iovcnt)
 {
 	msghdr header{
 	        .msg_name = nullptr,
@@ -282,10 +290,10 @@ writev(int fd, const iovec * iov, int iovcnt)
 }
 
 size_t
-peek_next_datagram_size(int fd)
+peek_next_datagram_size(native_socket_t fd)
 {
 	u_long bytes_available = 0;
-	if (ioctlsocket(static_cast<SOCKET>(fd), FIONREAD, &bytes_available) == SOCKET_ERROR)
+	if (ioctlsocket(fd, FIONREAD, &bytes_available) == SOCKET_ERROR)
 		throw_last_socket_error();
 	return static_cast<size_t>(bytes_available);
 }
@@ -313,7 +321,7 @@ mark_unreachable()
 #endif
 
 static int
-recvmmsg(int fd, struct mmsghdr * msgvec, unsigned int vlen, int flags, struct timespec *)
+recvmmsg(native_socket_t fd, struct mmsghdr * msgvec, unsigned int vlen, int flags, struct timespec *)
 {
 	unsigned int received = 0;
 
@@ -337,7 +345,7 @@ recvmmsg(int fd, struct mmsghdr * msgvec, unsigned int vlen, int flags, struct t
 }
 
 static int
-sendmmsg(int fd, struct mmsghdr * msgvec, unsigned int vlen, int flags)
+sendmmsg(native_socket_t fd, struct mmsghdr * msgvec, unsigned int vlen, int flags)
 {
 	unsigned int sent = 0;
 
@@ -385,7 +393,7 @@ wivrn::fd_base & wivrn::fd_base::operator=(wivrn::fd_base && other)
 
 wivrn::fd_base::~fd_base()
 {
-	if (fd >= 0)
+	if (fd != invalid_socket_handle)
 		close_socket(fd);
 }
 
@@ -395,12 +403,15 @@ wivrn::UDP::UDP()
 	ensure_socket_runtime();
 #endif
 	fd = socket(AF_INET6, SOCK_DGRAM, 0);
-	if (fd < 0)
+	if (fd == invalid_socket_handle)
 		throw_last_socket_error();
+#if defined(_WIN32)
+	enable_dual_stack_socket(fd);
+#endif
 	set_close_on_exec(fd);
 }
 
-wivrn::UDP::UDP(int fd)
+wivrn::UDP::UDP(native_socket_t fd)
 {
 	this->fd = fd;
 }
@@ -496,7 +507,7 @@ void wivrn::TCP::init()
 	mutex = std::make_unique<std::mutex>();
 }
 
-wivrn::TCP::TCP(int fd)
+wivrn::TCP::TCP(native_socket_t fd)
 {
 	this->fd = fd;
 
@@ -509,8 +520,11 @@ wivrn::TCP::TCP(in6_addr address, int port)
 	ensure_socket_runtime();
 #endif
 	fd = socket(AF_INET6, SOCK_STREAM, 0);
-	if (fd < 0)
+	if (fd == invalid_socket_handle)
 		throw_last_socket_error();
+#if defined(_WIN32)
+	enable_dual_stack_socket(fd);
+#endif
 	set_close_on_exec(fd);
 
 	sockaddr_in6 sa;
@@ -533,7 +547,7 @@ wivrn::TCP::TCP(in_addr address, int port)
 	ensure_socket_runtime();
 #endif
 	fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd < 0)
+	if (fd == invalid_socket_handle)
 		throw_last_socket_error();
 	set_close_on_exec(fd);
 
@@ -558,10 +572,14 @@ wivrn::TCPListener::TCPListener(int port)
 #endif
 	fd = socket(AF_INET6, SOCK_STREAM, 0);
 
-	if (fd < 0)
+	if (fd == invalid_socket_handle)
 	{
 		throw_last_socket_error();
 	}
+
+#if defined(_WIN32)
+	enable_dual_stack_socket(fd);
+#endif
 
 	int reuse_addr = 1;
 	if (set_socket_option(fd, SOL_SOCKET, SO_REUSEADDR, reuse_addr) < 0)
@@ -835,7 +853,8 @@ wivrn::deserialization_packet wivrn::TCP::receive_raw()
 
 	if (capacity_left > 0)
 	{
-		ssize_t received_size = recv(fd, reinterpret_cast<char *>(&*data.end()), static_cast<int>(capacity_left),
+		auto * write_ptr = data.data() + data.size();
+		ssize_t received_size = recv(fd, reinterpret_cast<char *>(write_ptr), static_cast<int>(capacity_left),
 #if defined(_WIN32)
 		                             0
 #else
@@ -851,7 +870,7 @@ wivrn::deserialization_packet wivrn::TCP::receive_raw()
 
 		if (decrypter)
 		{
-			std::span<uint8_t> received_data{&*data.end(), (size_t)received_size};
+			std::span<uint8_t> received_data{write_ptr, (size_t)received_size};
 			decrypter.decrypt_in_place(received_data);
 		}
 

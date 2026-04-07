@@ -42,6 +42,8 @@
 #include <ws2tcpip.h>
 
 using ssize_t = SSIZE_T;
+using native_socket_t = SOCKET;
+inline constexpr native_socket_t invalid_socket_handle = INVALID_SOCKET;
 
 struct iovec
 {
@@ -76,6 +78,9 @@ struct mmsghdr
 #else
 #include <fcntl.h>
 #include <netinet/ip.h>
+
+using native_socket_t = int;
+inline constexpr native_socket_t invalid_socket_handle = -1;
 #endif
 
 namespace wivrn
@@ -110,29 +115,29 @@ static_assert(index_of_type<float, int, float>::value == 1);
 class fd_base
 {
 protected:
-	int fd = -1;
+	native_socket_t fd = invalid_socket_handle;
 
 	fd_base(const fd_base &) = delete;
 
 public:
 	fd_base() = default;
-	fd_base(int fd) :
+	fd_base(native_socket_t fd) :
 	        fd{fd} {}
 	fd_base(fd_base &&);
 	fd_base & operator=(fd_base &&);
 	~fd_base();
 
-	int get_fd() const
+	native_socket_t get_fd() const
 	{
 		return fd;
 	}
 
 	operator bool() const
 	{
-		return fd != -1;
+		return fd != invalid_socket_handle;
 	}
 
-	operator int() const
+	operator native_socket_t() const
 	{
 		return fd;
 	}
@@ -155,7 +160,7 @@ class UDP : public fd_base
 
 public:
 	UDP();
-	explicit UDP(int fd);
+	explicit UDP(native_socket_t fd);
 
 	deserialization_packet receive_raw();
 	deserialization_packet receive_pending();
@@ -192,7 +197,7 @@ public:
 	TCP() = default;
 	TCP(in6_addr address, int port);
 	TCP(in_addr address, int port);
-	explicit TCP(int fd);
+	explicit TCP(native_socket_t fd);
 
 	deserialization_packet receive_raw();
 	deserialization_packet receive_pending();
@@ -215,15 +220,15 @@ public:
 	template <typename T = TCP>
 	std::pair<T, sockaddr_in6> accept()
 	{
-		assert(fd != -1);
+		assert(fd != invalid_socket_handle);
 		sockaddr_in6 addr{};
 		socklen_t addrlen = sizeof(addr);
 
-		int fd2 = ::accept(fd, (sockaddr *)&addr, &addrlen);
+		native_socket_t fd2 = ::accept(fd, (sockaddr *)&addr, &addrlen);
 #if !defined(_WIN32)
 		fcntl(fd, F_SETFD, FD_CLOEXEC);
 #endif
-		if (fd2 < 0)
+		if (fd2 == invalid_socket_handle)
 			throw std::system_error{errno, std::generic_category()};
 
 		return {T{fd2}, addr};
