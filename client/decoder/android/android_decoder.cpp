@@ -23,6 +23,7 @@
 #include "utils/named_thread.h"
 #include <android/hardware_buffer.h>
 #include <cassert>
+#include <chrono>
 #include <magic_enum.hpp>
 #include <media/NdkImage.h>
 #include <media/NdkImageReader.h>
@@ -136,8 +137,6 @@ decoder::decoder(
 	{
 		AMediaFormat_ptr format(AMediaFormat_new());
 		AMediaFormat_setString(format.get(), AMEDIAFORMAT_KEY_MIME, mime(description.codec[stream_index]));
-		// AMediaFormat_setInt32(format.get(), "vendor.qti-ext-dec-low-latency.enable", 1); // Qualcomm low
-		// latency mode
 		AMediaFormat_setInt32(format.get(), AMEDIAFORMAT_KEY_WIDTH, width);
 		AMediaFormat_setInt32(format.get(), AMEDIAFORMAT_KEY_HEIGHT, height);
 		AMediaFormat_setInt32(format.get(), AMEDIAFORMAT_KEY_OPERATING_RATE, std::ceil(description.fps));
@@ -239,7 +238,11 @@ void decoder::push_data(std::span<std::span<const uint8_t>> data, uint64_t frame
 
 	jobs.push([=, idx = current_input_buffer.idx, data_size = current_input_buffer.data_size, mc = media_codec.get()]() {
 		uint64_t timestamp = frame_index * 10'000;
+		auto t0 = std::chrono::steady_clock::now();
 		auto status = AMediaCodec_queueInputBuffer(mc, idx, 0, data_size, timestamp, 0);
+		auto t1 = std::chrono::steady_clock::now();
+		auto queue_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+		spdlog::warn("DECODE_TRACE queue frame={} size={} queue_us={}", frame_index, data_size, queue_us);
 		if (status != AMEDIA_OK)
 			spdlog::error("AMediaCodec_queueInputBuffer: MediaCodec error {}({})",
 			              int(status),
@@ -281,6 +284,7 @@ void decoder::on_image_available(AImageReader * reader)
 {
 	assert(reader == image_reader.get());
 	// Executed on image reader thread
+	auto img_avail_time = std::chrono::steady_clock::now();
 
 	decltype(android_blit_handle::aimage) image;
 	try
@@ -292,6 +296,7 @@ void decoder::on_image_available(AImageReader * reader)
 		int64_t fake_timestamp_ns;
 		check(AImage_getTimestamp(image.get(), &fake_timestamp_ns), "AImage_getTimestamp");
 		uint64_t frame_index = (fake_timestamp_ns + 5'000'000) / (10'000'000);
+		spdlog::warn("DECODE_TRACE image_available frame={}", frame_index);
 
 		frame_infos.drop_until([frame_index](auto & x) { return x.feedback.frame_index >= frame_index; });
 
@@ -532,8 +537,17 @@ void decoder::on_media_input_available(AMediaCodec * media_codec, void * userdat
 void decoder::on_media_output_available(AMediaCodec * media_codec, void * userdata, int32_t index, AMediaCodecBufferInfo * bufferInfo)
 {
 	auto self = (decoder *)userdata;
+	int64_t pts = bufferInfo->presentationTimeUs;
+	uint64_t frame_index = (pts + 5'000) / 10'000;
+	auto cb_time = std::chrono::steady_clock::now();
+	spdlog::warn("DECODE_TRACE output_available frame={}", frame_index);
 	self->jobs.push([=]() {
+		auto t0 = std::chrono::steady_clock::now();
+		auto cb_to_release_us = std::chrono::duration_cast<std::chrono::microseconds>(t0 - cb_time).count();
 		auto status = AMediaCodec_releaseOutputBuffer(media_codec, index, true);
+		auto t1 = std::chrono::steady_clock::now();
+		auto release_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+		spdlog::warn("DECODE_TRACE release frame={} cb_to_release_us={} release_us={}", frame_index, cb_to_release_us, release_us);
 		// will trigger on_image_available through ImageReader
 		if (status != AMEDIA_OK)
 			spdlog::error("AMediaCodec_releaseOutputBuffer: MediaCodec error {}({})",
