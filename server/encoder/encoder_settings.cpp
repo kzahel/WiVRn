@@ -111,7 +111,7 @@ void print_encoders(const std::array<wivrn::encoder_settings, 3> & encoders)
 		    << "\n\t\tsize: " << encoder.width << "x" << encoder.height
 		    << "\n\t\tbitrate: " << int(encoder.bitrate / 100'000) / 10. << "Mbit/s";
 	}
-	U_LOG_I("%s", str.str().c_str());
+	U_LOG_W("%s", str.str().c_str());
 }
 
 static void check_video_size(std::string_view encoder_name, video_codec codec, uint16_t & width, uint16_t & height)

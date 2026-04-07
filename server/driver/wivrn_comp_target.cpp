@@ -75,6 +75,17 @@ log_apple_alpha_flow_enabled()
 #endif
 }
 
+bool
+log_apple_host_timing_enabled()
+{
+#if defined(__APPLE__)
+	static const bool enabled = std::getenv("WIVRN_LOG_APPLE_HOST_TIMING") != nullptr;
+	return enabled;
+#else
+	return false;
+#endif
+}
+
 bool uses_two_layer_apple_software_path(const std::array<encoder_settings, 3> & settings)
 {
 #if defined(__APPLE__)
@@ -592,6 +603,8 @@ void wivrn_comp_target::run_present(std::stop_token stop_token, int index, std::
 		// Get local copies before releasing the image
 		auto view_info = psc.view_info;
 		auto frame_index = psc.frame_index;
+		const bool log_host_timing = log_apple_host_timing_enabled();
+		const int64_t frame_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
 
 		auto res = vk.device.waitForFences(*psc.fence, true, UINT64_MAX);
 		if (index == 0 && settings[0].rgba_input && log_apple_source_samples_enabled())
@@ -620,10 +633,41 @@ void wivrn_comp_target::run_present(std::stop_token stop_token, int index, std::
 
 		try
 		{
+			size_t encode_seq = 0;
 			for (auto & encoder: encoders)
 			{
 				if (encoder->stream_idx < 2 or view_info.alpha)
+				{
+					const int64_t encode_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
 					encoder->encode(cnx, view_info, frame_index);
+					if (log_host_timing)
+					{
+						const int64_t encode_end_ns = os_monotonic_get_ns();
+						fprintf(stderr,
+						        "apple-host-encode frame=%llu thread=%d stream=%u seq=%zu alpha=%d start_offset_us=%lld "
+						        "end_offset_us=%lld encode_us=%lld\n",
+						        (unsigned long long)frame_index,
+						        index,
+						        unsigned(encoder->stream_idx),
+						        encode_seq,
+						        view_info.alpha ? 1 : 0,
+						        (long long)((encode_begin_ns - frame_begin_ns) / 1000),
+						        (long long)((encode_end_ns - frame_begin_ns) / 1000),
+						        (long long)((encode_end_ns - encode_begin_ns) / 1000));
+					}
+					++encode_seq;
+				}
+			}
+			if (log_host_timing)
+			{
+				const int64_t frame_end_ns = os_monotonic_get_ns();
+				fprintf(stderr,
+				        "apple-host-encode frame=%llu thread=%d phase=frame_done alpha=%d total_us=%lld streams=%zu\n",
+				        (unsigned long long)frame_index,
+				        index,
+				        view_info.alpha ? 1 : 0,
+				        (long long)((frame_end_ns - frame_begin_ns) / 1000),
+				        view_info.alpha ? size_t{3} : size_t{2});
 			}
 		}
 		catch (std::exception & e)
@@ -703,6 +747,8 @@ VkResult wivrn_comp_target::present(
 	const bool uses_apple_rgba_path = settings[0].rgba_input;
 	const bool has_alpha_encoder =
 	        std::ranges::any_of(encoders, [](const auto & encoder) { return encoder->stream_idx == 2; });
+	const bool log_host_timing = log_apple_host_timing_enabled();
+	const int64_t present_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
 
 	if (log_apple_alpha_flow_enabled())
 	{
@@ -757,6 +803,7 @@ VkResult wivrn_comp_target::present(
 	std::vector<vk::Semaphore> present_done_sem;
 	if (uses_apple_rgba_path && do_alpha)
 	{
+		const int64_t alpha_copy_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
 		for (uint32_t eye = 0; eye < 2; ++eye)
 		{
 			command_buffer.copyImageToBuffer(
@@ -776,7 +823,19 @@ VkResult wivrn_comp_target::present(
 			                        .depth = 1,
 			                }});
 		}
+		if (log_host_timing)
+		{
+			const int64_t alpha_copy_end_ns = os_monotonic_get_ns();
+			fprintf(stderr,
+			        "apple-present frame=%llu phase=alpha_copy alpha=%d start_offset_us=%lld end_offset_us=%lld duration_us=%lld\n",
+			        (unsigned long long)info.frame_id,
+			        do_alpha ? 1 : 0,
+			        (long long)((alpha_copy_begin_ns - present_begin_ns) / 1000),
+			        (long long)((alpha_copy_end_ns - present_begin_ns) / 1000),
+			        (long long)((alpha_copy_end_ns - alpha_copy_begin_ns) / 1000));
+		}
 	}
+	size_t present_stream_count = 0;
 	for (auto & encoder: encoders)
 	{
 		if (encoder->stream_idx == 2 and not do_alpha)
@@ -841,14 +900,43 @@ VkResult wivrn_comp_target::present(
 			                },
 			        });
 		}
+		const int64_t stream_present_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
 		auto [transfer, sem] = encoder->present_image(
 		        psc_image.image,
 		        need_queue_transfer,
 		        command_buffer,
 		        info.frame_id);
+		if (log_host_timing)
+		{
+			const int64_t stream_present_end_ns = os_monotonic_get_ns();
+			fprintf(stderr,
+			        "apple-present frame=%llu stream=%u seq=%zu alpha=%d transfer=%d signal_sem=%d start_offset_us=%lld "
+			        "end_offset_us=%lld duration_us=%lld\n",
+			        (unsigned long long)info.frame_id,
+			        unsigned(encoder->stream_idx),
+			        present_stream_count,
+			        do_alpha ? 1 : 0,
+			        transfer ? 1 : 0,
+			        sem ? 1 : 0,
+			        (long long)((stream_present_begin_ns - present_begin_ns) / 1000),
+			        (long long)((stream_present_end_ns - present_begin_ns) / 1000),
+			        (long long)((stream_present_end_ns - stream_present_begin_ns) / 1000));
+		}
+		++present_stream_count;
 		need_queue_transfer |= transfer;
 		if (sem)
 			present_done_sem.push_back(sem);
+	}
+	if (log_host_timing)
+	{
+		const int64_t present_loop_end_ns = os_monotonic_get_ns();
+		fprintf(stderr,
+		        "apple-present frame=%llu phase=present_loop_done alpha=%d total_us=%lld streams=%zu need_queue_transfer=%d\n",
+		        (unsigned long long)info.frame_id,
+		        do_alpha ? 1 : 0,
+		        (long long)((present_loop_end_ns - present_begin_ns) / 1000),
+		        present_stream_count,
+		        need_queue_transfer ? 1 : 0);
 	}
 
 #if WIVRN_USE_VULKAN_ENCODE
