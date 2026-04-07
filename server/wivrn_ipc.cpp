@@ -21,9 +21,16 @@
 #include "driver/wivrn_connection.h"
 
 #include <algorithm>
+#include <array>
+#include <mutex>
+
+#if defined(_WIN32)
+#include <memory>
+#else
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 std::unique_ptr<wivrn::wivrn_connection> connection;
 
@@ -35,6 +42,14 @@ struct cleanup_function
 
 std::array<cleanup_function, 1024> * cleanup_functions; // In shared memory
 
+#if defined(_WIN32)
+namespace
+{
+std::unique_ptr<std::array<cleanup_function, 1024>> cleanup_functions_storage;
+std::mutex cleanup_functions_mutex;
+}
+#endif
+
 std::optional<to_monado::packets> receive_from_main()
 {
 	return wivrn_ipc_socket_monado->receive();
@@ -42,15 +57,23 @@ std::optional<to_monado::packets> receive_from_main()
 
 void init_cleanup_functions()
 {
+#if defined(_WIN32)
+	cleanup_functions_storage = std::make_unique<std::array<cleanup_function, 1024>>();
+	cleanup_functions = cleanup_functions_storage.get();
+#else
 	if (cleanup_functions)
 		munmap(cleanup_functions, sizeof(*cleanup_functions));
 	cleanup_functions = (decltype(cleanup_functions))mmap(nullptr, sizeof(*cleanup_functions), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+#endif
 
 	std::fill(cleanup_functions->begin(), cleanup_functions->end(), cleanup_function{});
 }
 
 void add_cleanup_function(void (*callback)(uintptr_t), uintptr_t userdata)
 {
+#if defined(_WIN32)
+	std::lock_guard lock(cleanup_functions_mutex);
+#endif
 	for (auto & i: *cleanup_functions)
 	{
 		if (i.callback == nullptr)
@@ -63,6 +86,9 @@ void add_cleanup_function(void (*callback)(uintptr_t), uintptr_t userdata)
 
 void remove_cleanup_function(void (*callback)(uintptr_t), uintptr_t userdata)
 {
+#if defined(_WIN32)
+	std::lock_guard lock(cleanup_functions_mutex);
+#endif
 	for (auto & i: *cleanup_functions)
 	{
 		if (i.callback == callback && i.userdata == userdata)
@@ -79,6 +105,22 @@ void run_cleanup_functions()
 	if (std::ranges::all_of(*cleanup_functions, [](auto & i) { return i.callback == nullptr; }))
 		return;
 
+#if defined(_WIN32)
+	// Windows headless bring-up currently runs cleanup callbacks in-process:
+	// there is no PulseAudio fork-safety constraint on this path.
+	std::array<cleanup_function, 1024> pending{};
+	{
+		std::lock_guard lock(cleanup_functions_mutex);
+		pending = *cleanup_functions;
+		std::fill(cleanup_functions->begin(), cleanup_functions->end(), cleanup_function{});
+	}
+
+	for (auto & i: pending)
+	{
+		if (i.callback)
+			i.callback(i.userdata);
+	}
+#else
 	// Fork because pulseaudio doesn't like being initialized in the parent and the child
 	// of a fork, and ipc_server_main() is called in a child process
 	pid_t child = fork();
@@ -104,4 +146,5 @@ void run_cleanup_functions()
 		int wstatus = 0;
 		waitpid(child, &wstatus, 0);
 	}
+#endif
 }

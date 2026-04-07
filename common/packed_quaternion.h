@@ -95,7 +95,11 @@ struct packed_quaternion
 				return {q1, q2, q3, q0};
 		}
 
+#if defined(_MSC_VER)
+		__assume(0);
+#else
 		__builtin_unreachable();
+#endif
 	}
 };
 

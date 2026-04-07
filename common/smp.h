@@ -30,6 +30,7 @@
 #include <cassert>
 #include <memory>
 #include <openssl/bn.h>
+#include <stdexcept>
 #include <string>
 
 namespace crypto

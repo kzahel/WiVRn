@@ -27,12 +27,29 @@
 #include <filesystem>
 #include <iostream>
 #include <optional>
-#include <poll.h>
 #include <random>
 #include <stop_token>
 #include <string_view>
-#include <sys/socket.h>
 #include <thread>
+
+#if defined(_WIN32)
+using control_pollfd = WSAPOLLFD;
+
+int
+poll_control_fds(control_pollfd * fds, size_t count, int timeout_ms)
+{
+	return WSAPoll(fds, static_cast<ULONG>(count), timeout_ms);
+}
+#else
+#include <poll.h>
+using control_pollfd = pollfd;
+
+int
+poll_control_fds(control_pollfd * fds, size_t count, int timeout_ms)
+{
+	return poll(fds, count, timeout_ms);
+}
+#endif
 
 extern "C"
 {
@@ -45,8 +62,20 @@ std::optional<wivrn::typed_socket<wivrn::UnixDatagram, to_monado::packets, from_
 namespace
 {
 std::optional<wivrn::typed_socket<wivrn::UnixDatagram, from_monado::packets, to_monado::packets>> wivrn_ipc_socket_headless;
-int control_pipe_fds[2] = {-1, -1};
 std::unique_ptr<wivrn::TCPListener> headset_listener;
+
+void
+set_environment_variable(const char * name, const char * value, bool overwrite)
+{
+#if defined(_WIN32)
+	if (!overwrite && std::getenv(name) != nullptr)
+		return;
+
+	_putenv_s(name, value);
+#else
+	setenv(name, value, overwrite);
+#endif
+}
 
 void
 print_usage(const char * argv0)
@@ -141,15 +170,15 @@ log_control_packet(const from_monado::packets & packet)
 void
 drain_control_packets(std::stop_token stop)
 {
-	pollfd fd{
-	        .fd = wivrn_ipc_socket_headless->get_fd(),
+	control_pollfd fd{
+	        .fd = static_cast<decltype(control_pollfd{}.fd)>(wivrn_ipc_socket_headless->get_fd()),
 	        .events = POLLIN,
 	        .revents = 0,
 	};
 
 	while (!stop.stop_requested())
 	{
-		if (poll(&fd, 1, 100) < 0)
+		if (poll_control_fds(&fd, 1, 100) < 0)
 		{
 			perror("poll");
 			return;
@@ -167,10 +196,10 @@ drain_control_packets(std::stop_token stop)
 void
 configure_server_environment()
 {
-	setenv("XRT_COMPOSITOR_SCALE_PERCENTAGE", "100", true);
-	setenv("XRT_COMPOSITOR_COMPUTE", "1", true);
-	setenv("AMD_DEBUG", "lowlatencyenc", false);
-	setenv("INTEL_DEBUG", "noccs", false);
+	set_environment_variable("XRT_COMPOSITOR_SCALE_PERCENTAGE", "100", true);
+	set_environment_variable("XRT_COMPOSITOR_COMPUTE", "1", true);
+	set_environment_variable("AMD_DEBUG", "lowlatencyenc", false);
+	set_environment_variable("INTEL_DEBUG", "noccs", false);
 }
 
 int
@@ -217,14 +246,17 @@ main(int argc, char * argv[])
 
 	std::cerr << "WiVRn " << wivrn::display_version() << " headless host starting\n";
 
-	if (socketpair(AF_UNIX, SOCK_DGRAM, 0, control_pipe_fds) < 0)
+	try
 	{
-		perror("socketpair");
+		auto [headless_socket, monado_socket] = wivrn::make_local_datagram_pair();
+		wivrn_ipc_socket_headless.emplace(std::move(headless_socket));
+		wivrn_ipc_socket_monado.emplace(std::move(monado_socket));
+	}
+	catch (const std::exception & e)
+	{
+		std::cerr << "Failed to create headless control socket pair: " << e.what() << "\n";
 		return EXIT_FAILURE;
 	}
-
-	wivrn_ipc_socket_headless.emplace(control_pipe_fds[0]);
-	wivrn_ipc_socket_monado.emplace(control_pipe_fds[1]);
 
 	std::jthread control_thread(drain_control_packets);
 

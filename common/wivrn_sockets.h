@@ -25,13 +25,58 @@
 #include <atomic>
 #include <cassert>
 #include <exception>
-#include <fcntl.h>
 #include <memory>
 #include <mutex>
-#include <netinet/ip.h>
 #include <span>
 #include <utility>
 #include <vector>
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+using ssize_t = SSIZE_T;
+
+struct iovec
+{
+	void * iov_base;
+	size_t iov_len;
+};
+
+struct msghdr
+{
+	void * msg_name;
+	int msg_namelen;
+	iovec * msg_iov;
+	size_t msg_iovlen;
+	void * msg_control;
+	size_t msg_controllen;
+	int msg_flags;
+};
+
+struct mmsghdr
+{
+	msghdr msg_hdr;
+	unsigned int msg_len;
+};
+
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT 0x40
+#endif
+#else
+#include <fcntl.h>
+#include <netinet/ip.h>
+#endif
 
 namespace wivrn
 {
@@ -158,6 +203,8 @@ public:
 
 using UnixDatagram = UDP;
 
+std::pair<UDP, UDP> make_local_datagram_pair();
+
 class TCPListener : public fd_base
 {
 public:
@@ -172,7 +219,9 @@ public:
 		socklen_t addrlen = sizeof(addr);
 
 		int fd2 = ::accept(fd, (sockaddr *)&addr, &addrlen);
+#if !defined(_WIN32)
 		fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
 		if (fd2 < 0)
 			throw std::system_error{errno, std::generic_category()};
 

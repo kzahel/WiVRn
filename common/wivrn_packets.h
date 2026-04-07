@@ -22,7 +22,18 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <netinet/in.h>
+#endif
 #include <openssl/aes.h>
 #include <optional>
 #include <span>
@@ -412,16 +423,17 @@ struct body_tracking
 		orientation_tracked = 1 << 2,
 		position_tracked = 1 << 3,
 	};
-	struct pose
+	struct tracked_pose
 	{
 		XrPosef pose{};
 		// maybe add velocity?
 		uint8_t flags{0};
 	};
+	using pose = tracked_pose;
 
 	XrTime production_timestamp;
 	XrTime timestamp;
-	std::optional<std::array<pose, max_tracked_poses>> poses;
+	std::optional<std::array<tracked_pose, max_tracked_poses>> poses;
 };
 
 struct inputs
