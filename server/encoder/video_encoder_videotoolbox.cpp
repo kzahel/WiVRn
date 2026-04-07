@@ -6,6 +6,7 @@
 #include "utils/wivrn_vk_bundle.h"
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -641,16 +642,17 @@ video_encoder_videotoolbox::encode(uint8_t slot, uint64_t frame_index)
 	const int64_t vt_encode_end_ns = log_host_timing ? os_monotonic_get_ns() : 0;
 	request->encode_submit_ns = vt_encode_end_ns;
 
-	const int64_t complete_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
-	status = VTCompressionSessionCompleteFrames(session, pts);
-	if (status != noErr)
-		throw std::runtime_error("VTCompressionSessionCompleteFrames failed: " + osstatus_string(status));
-	const int64_t complete_end_ns = log_host_timing ? os_monotonic_get_ns() : 0;
+	// No per-frame CompleteFrames flush — low-latency rate control guarantees
+	// one-in-one-out, so the callback fires promptly after EncodeFrame.
+	// CompleteFrames is only used during session teardown (destructor).
+	const int64_t complete_begin_ns = 0;
+	const int64_t complete_end_ns = 0;
 
 	const int64_t wait_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
 	{
 		std::unique_lock lock(request->mutex);
-		request->cv.wait(lock, [&] { return request->completed; });
+		if (!request->cv.wait_for(lock, std::chrono::milliseconds(50), [&] { return request->completed; }))
+			throw std::runtime_error("VideoToolbox callback timeout (50ms) — low-latency one-in-one-out not working");
 	}
 	const int64_t wait_end_ns = log_host_timing ? os_monotonic_get_ns() : 0;
 
