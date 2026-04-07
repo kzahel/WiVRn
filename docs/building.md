@@ -117,6 +117,52 @@ and the headless host starts with:
 That is still not an end-to-end stream proof. It is the first concrete macOS
 host-binary checkpoint above the runtime target.
 
+## Windows headless bootstrap
+
+The current Windows port spike follows the same headless-first strategy as the
+macOS branch:
+
+- prefer `wivrn-server-headless` over the Linux desktop shell
+- default Linux desktop integrations off on `WIN32`
+- avoid `PkgConfig` unless an enabled feature actually needs it
+
+The first useful Windows configure probe is intentionally minimal:
+
+```powershell
+cmake -S . -B build-windows-headless `
+  -DWIVRN_MONADO_SOURCE_DIR=third_party/monado `
+  -DWIVRN_BUILD_CLIENT=OFF `
+  -DWIVRN_BUILD_DASHBOARD=OFF `
+  -DWIVRN_BUILD_WIVRNCTL=OFF `
+  -DWIVRN_BUILD_TEST=OFF `
+  -DWIVRN_USE_AVAHI=OFF `
+  -DWIVRN_USE_DBUS_CONTROL=OFF `
+  -DWIVRN_USE_LIBNOTIFY=OFF `
+  -DWIVRN_USE_SYSTEMD=OFF `
+  -DWIVRN_USE_UINPUT=OFF `
+  -DWIVRN_USE_APPLICATIONS=OFF `
+  -DWIVRN_USE_PIPEWIRE=OFF `
+  -DWIVRN_USE_PULSEAUDIO=OFF `
+  -DWIVRN_USE_VAAPI=OFF `
+  -DWIVRN_USE_VULKAN_ENCODE=OFF `
+  -DWIVRN_USE_X264=OFF
+```
+
+On the current Windows bring-up machine, this probe now gets past the older
+unconditional `PkgConfig` failure and stops later at Vulkan SDK detection:
+
+- `find_package(Vulkan REQUIRED)`
+- missing `Vulkan_LIBRARY`
+- missing `Vulkan_INCLUDE_DIR`
+
+So the current Windows checkpoint is:
+
+- Linux desktop-shell assumptions no longer block the minimal headless configure
+- the next local dependency requirement is a usable Windows Vulkan SDK/dev setup
+
+After that, the next expected code blocker is the POSIX-first socket and
+process/control-channel layer in the host-core code.
+
 The next branch checkpoint on the reference macOS machine is now beyond
 "waiting for a headset connection":
 
