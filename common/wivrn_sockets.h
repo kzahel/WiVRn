@@ -62,12 +62,6 @@ struct msghdr
 	int msg_flags;
 };
 
-struct mmsghdr
-{
-	msghdr msg_hdr;
-	unsigned int msg_len;
-};
-
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
@@ -81,6 +75,14 @@ struct mmsghdr
 
 using native_socket_t = int;
 inline constexpr native_socket_t invalid_socket_handle = -1;
+#endif
+
+#if defined(__APPLE__) || defined(_WIN32)
+struct mmsghdr
+{
+	msghdr msg_hdr;
+	unsigned int msg_len;
+};
 #endif
 
 namespace wivrn
