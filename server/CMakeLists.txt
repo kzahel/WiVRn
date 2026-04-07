@@ -177,9 +177,13 @@ function(wivrn_configure_server_target target_name)
 	endif()
 
 	if(WIVRN_USE_VIDEOTOOLBOX)
-		target_sources(${target_name} PRIVATE encoder/video_encoder_videotoolbox.cpp)
+		target_sources(${target_name} PRIVATE
+			encoder/video_encoder_videotoolbox.cpp
+			utils/apple_vulkan_metal_bridge.mm)
 		target_link_libraries(${target_name} PRIVATE
 			"-framework Accelerate"
+			"-framework Foundation"
+			"-framework Metal"
 			"-framework VideoToolbox"
 			"-framework CoreMedia"
 			"-framework CoreVideo"

@@ -101,6 +101,9 @@ bool uses_two_layer_apple_software_path(const std::array<encoder_settings, 3> & 
 
 std::vector<const char *> wivrn_comp_target::wanted_instance_extensions = {};
 std::vector<const char *> wivrn_comp_target::wanted_device_extensions = {
+#if defined(__APPLE__)
+        "VK_EXT_metal_objects",
+#endif
 // For FFMPEG
 #ifdef VK_EXT_external_memory_dma_buf
         VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,

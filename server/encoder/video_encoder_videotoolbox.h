@@ -18,6 +18,8 @@
 namespace wivrn
 {
 
+class apple_vulkan_metal_bridge;
+
 class video_encoder_videotoolbox : public video_encoder
 {
 	struct encode_request
@@ -38,19 +40,25 @@ class video_encoder_videotoolbox : public video_encoder
 	struct in_t
 	{
 		buffer_allocation rgba;
+		CVPixelBufferRef pixel_buffer = nullptr;
+		VkImage source_image = VK_NULL_HANDLE;
+		int64_t source_copy_ns = 0;
 	};
 
 	VTCompressionSessionRef session = nullptr;
 	std::array<in_t, num_slots> in;
 	bool rgba_input = false;
 	bool external_alpha_input = false;
+	bool bgra_input = false;
 	bool direct_rgba_input = false;
+	bool gpu_bridge_enabled = false;
 	bool vimage_nv12_conversion = false;
 	uint64_t rgba_debug_log_count = 0;
 	std::array<buffer_allocation *, 2> external_alpha_sources = {};
 	vImage_ARGBToYpCbCr vimage_argb_to_ycbcr = {};
 	CMTime next_pts = kCMTimeZero;
 	CMTime frame_duration = kCMTimeInvalid;
+	std::unique_ptr<apple_vulkan_metal_bridge> gpu_bridge;
 
 public:
 	static bool supports(video_codec codec);
@@ -76,6 +84,7 @@ private:
 	static void append_h264_parameter_sets(std::vector<uint8_t> & out, CMFormatDescriptionRef format_description);
 	static void append_h264_sample(std::vector<uint8_t> & out, CMSampleBufferRef sample_buffer);
 	static bool is_sync_sample(CMSampleBufferRef sample_buffer);
+	static CFDictionaryRef create_source_attributes(uint32_t width, uint32_t height, OSType pixel_format);
 
 	void configure_session(const encoder_settings & settings);
 	void update_frame_rate(float fps);
@@ -83,6 +92,7 @@ private:
 	void copy_rgba_to_pixel_buffer(uint8_t slot, CVPixelBufferRef pixel_buffer);
 	void convert_rgba_to_nv12(uint8_t slot, CVPixelBufferRef pixel_buffer);
 	void prepare_external_alpha_rgba(uint8_t slot);
+	CVPixelBufferRef create_source_pixel_buffer(OSType pixel_format);
 };
 
 } // namespace wivrn
