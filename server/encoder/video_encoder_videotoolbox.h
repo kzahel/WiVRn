@@ -3,6 +3,7 @@
 #include "video_encoder.h"
 #include "vk/allocation.h"
 
+#include <Accelerate/Accelerate.h>
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
@@ -26,6 +27,10 @@ class video_encoder_videotoolbox : public video_encoder
 		bool completed = false;
 		bool dropped = false;
 		bool control = false;
+		uint64_t frame_index = 0;
+		uint8_t stream_idx = 0;
+		int64_t encode_submit_ns = 0;
+		int64_t callback_ns = 0;
 		std::string error;
 		std::vector<uint8_t> bitstream;
 	};
@@ -39,8 +44,11 @@ class video_encoder_videotoolbox : public video_encoder
 	std::array<in_t, num_slots> in;
 	bool rgba_input = false;
 	bool external_alpha_input = false;
+	bool direct_rgba_input = false;
+	bool vimage_nv12_conversion = false;
 	uint64_t rgba_debug_log_count = 0;
 	std::array<buffer_allocation *, 2> external_alpha_sources = {};
+	vImage_ARGBToYpCbCr vimage_argb_to_ycbcr = {};
 	CMTime next_pts = kCMTimeZero;
 	CMTime frame_duration = kCMTimeInvalid;
 
@@ -72,6 +80,7 @@ private:
 	void configure_session(const encoder_settings & settings);
 	void update_frame_rate(float fps);
 	void update_bitrate(uint32_t bitrate_bps);
+	void copy_rgba_to_pixel_buffer(uint8_t slot, CVPixelBufferRef pixel_buffer);
 	void convert_rgba_to_nv12(uint8_t slot, CVPixelBufferRef pixel_buffer);
 	void prepare_external_alpha_rgba(uint8_t slot);
 };

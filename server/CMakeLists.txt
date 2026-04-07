@@ -179,6 +179,7 @@ function(wivrn_configure_server_target target_name)
 	if(WIVRN_USE_VIDEOTOOLBOX)
 		target_sources(${target_name} PRIVATE encoder/video_encoder_videotoolbox.cpp)
 		target_link_libraries(${target_name} PRIVATE
+			"-framework Accelerate"
 			"-framework VideoToolbox"
 			"-framework CoreMedia"
 			"-framework CoreVideo"
