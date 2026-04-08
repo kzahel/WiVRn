@@ -84,6 +84,7 @@ set(WIVRN_SERVER_CORE_SOURCES
 	wivrn_ipc.cpp
 
 	audio/audio_setup.cpp
+	audio/audio_pcm_sender.cpp
 
 	encoder/encoder_settings.cpp
 	encoder/idr_handler.cpp
@@ -188,6 +189,17 @@ function(wivrn_configure_server_target target_name)
 			"-framework CoreMedia"
 			"-framework CoreVideo"
 			"-framework CoreFoundation")
+	endif()
+
+	if(WIVRN_USE_COREAUDIO)
+		target_sources(${target_name} PRIVATE audio/audio_coreaudio.mm)
+		set_source_files_properties(audio/audio_coreaudio.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+		target_link_libraries(${target_name} PRIVATE
+			"-framework CoreAudio"
+			"-framework CoreGraphics"
+			"-framework CoreMedia"
+			"-framework Foundation"
+			"-framework ScreenCaptureKit")
 	endif()
 
 	if(WIVRN_USE_PIPEWIRE)

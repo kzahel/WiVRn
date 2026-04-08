@@ -30,6 +30,10 @@
 #include "audio_pipewire.h"
 #endif
 
+#if WIVRN_USE_COREAUDIO
+#include "audio_coreaudio.h"
+#endif
+
 std::unique_ptr<wivrn::audio_device> wivrn::audio_device::create(
         const std::string & source_name,
         const std::string & source_description,
@@ -45,6 +49,11 @@ std::unique_ptr<wivrn::audio_device> wivrn::audio_device::create(
 
 #if WIVRN_USE_PULSEAUDIO
 	if (auto res = create_pulse_handle(source_name, source_description, sink_name, sink_description, info, session))
+		return res;
+#endif
+
+#if WIVRN_USE_COREAUDIO
+	if (auto res = create_coreaudio_handle(source_name, source_description, sink_name, sink_description, info, session))
 		return res;
 #endif
 	U_LOG_W("No audio backend available");
