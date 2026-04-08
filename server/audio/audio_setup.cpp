@@ -22,6 +22,8 @@
 #include "util/u_logging.h"
 #include "wivrn_config.h"
 
+#include <cstdlib>
+
 #if WIVRN_USE_PULSEAUDIO
 #include "audio_pulse.h"
 #endif
@@ -42,6 +44,15 @@ std::unique_ptr<wivrn::audio_device> wivrn::audio_device::create(
         const wivrn::from_headset::headset_info_packet & info,
         wivrn::wivrn_session & session)
 {
+	if (const char * enable_audio = std::getenv("WIVRN_HEADLESS_ENABLE_AUDIO"))
+	{
+		if (std::string_view(enable_audio) != "1")
+		{
+			U_LOG_I("Audio backend disabled by WIVRN_HEADLESS_ENABLE_AUDIO");
+			return nullptr;
+		}
+	}
+
 #if WIVRN_USE_PIPEWIRE
 	if (auto res = create_pipewire_handle(source_name, source_description, sink_name, sink_description, info, session))
 		return res;

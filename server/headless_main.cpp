@@ -80,11 +80,11 @@ set_environment_variable(const char * name, const char * value, bool overwrite)
 void
 print_usage(const char * argv0)
 {
-	std::cerr << "Usage: " << argv0 << " [--config FILE] [--no-encrypt] [--help]\n";
+	std::cerr << "Usage: " << argv0 << " [--config FILE] [--no-encrypt] [--enable-audio] [--help]\n";
 }
 
 bool
-parse_args(int argc, char * argv[], std::optional<std::filesystem::path> & config_file, bool & no_encrypt)
+parse_args(int argc, char * argv[], std::optional<std::filesystem::path> & config_file, bool & no_encrypt, bool & enable_audio)
 {
 	for (int i = 1; i < argc; ++i)
 	{
@@ -98,6 +98,12 @@ parse_args(int argc, char * argv[], std::optional<std::filesystem::path> & confi
 		if (arg == "--no-encrypt")
 		{
 			no_encrypt = true;
+			continue;
+		}
+
+		if (arg == "--enable-audio")
+		{
+			enable_audio = true;
 			continue;
 		}
 
@@ -238,13 +244,15 @@ main(int argc, char * argv[])
 {
 	std::optional<std::filesystem::path> config_file;
 	bool no_encrypt = false;
-	if (!parse_args(argc, argv, config_file, no_encrypt))
+	bool enable_audio = false;
+	if (!parse_args(argc, argv, config_file, no_encrypt, enable_audio))
 		return EXIT_SUCCESS;
 
 	if (config_file)
 		wivrn::configuration::set_config_file(*config_file);
 
 	std::cerr << "WiVRn " << wivrn::display_version() << " headless host starting\n";
+	std::cerr << "Headless audio " << (enable_audio ? "enabled" : "disabled") << "\n";
 
 	try
 	{
@@ -280,6 +288,7 @@ main(int argc, char * argv[])
 		return EXIT_FAILURE;
 
 	configure_server_environment();
+	set_environment_variable("WIVRN_HEADLESS_ENABLE_AUDIO", enable_audio ? "1" : "0", true);
 
 	wivrn::ipc_server_cb server_cb;
 	ipc_server_main_info server_info{
