@@ -67,6 +67,15 @@ set_session_property(VTCompressionSessionRef session, CFStringRef key, CFTypeRef
 	if (status != noErr)
 		throw std::runtime_error("VTSessionSetProperty failed: " + osstatus_string(status));
 }
+// IDR handler for the alpha stream (stream 2): never skip frames, every frame
+// is forced IDR by the session config so no feedback cycle is needed.
+class alpha_idr_handler : public idr_handler
+{
+public:
+	void on_feedback(const from_headset::feedback &) override {}
+	void reset() override {}
+	bool should_skip(uint64_t) override { return false; }
+};
 } // namespace
 
 bool
@@ -92,7 +101,11 @@ video_encoder_videotoolbox::video_encoder_videotoolbox(
         wivrn_vk_bundle & vk,
         const encoder_settings & settings,
         uint8_t stream_idx) :
-        video_encoder(stream_idx, settings, std::make_unique<default_idr_handler>(), true),
+        video_encoder(stream_idx, settings,
+                      stream_idx == 2
+                              ? std::unique_ptr<idr_handler>(std::make_unique<alpha_idr_handler>())
+                              : std::unique_ptr<idr_handler>(std::make_unique<default_idr_handler>()),
+                      true),
         frame_duration(make_frame_duration(settings.fps))
 {
 	if (settings.bit_depth != 8)
@@ -173,12 +186,26 @@ video_encoder_videotoolbox::configure_session(const encoder_settings & settings)
 	set_session_property(session, kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse);
 	set_session_property(session, kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_Main_AutoLevel);
 
-	CFNumberRef max_keyframe_interval = create_cf_number_s32(std::numeric_limits<int32_t>::max() / 2);
-	set_session_property(session, kVTCompressionPropertyKey_MaxKeyFrameInterval, max_keyframe_interval);
-	CFRelease(max_keyframe_interval);
+	if (external_alpha_input)
+	{
+		// Alpha stream: force every frame to be an IDR keyframe.
+		CFNumberRef one = create_cf_number_s32(1);
+		set_session_property(session, kVTCompressionPropertyKey_MaxKeyFrameInterval, one);
+		CFRelease(one);
+	}
+	else
+	{
+		CFNumberRef max_keyframe_interval = create_cf_number_s32(std::numeric_limits<int32_t>::max() / 2);
+		set_session_property(session, kVTCompressionPropertyKey_MaxKeyFrameInterval, max_keyframe_interval);
+		CFRelease(max_keyframe_interval);
+	}
 
 	update_frame_rate(settings.fps);
-	update_bitrate(settings.bitrate);
+	// Alpha stream: use high bitrate to prevent low-latency rate controller
+	// from dropping frames on the extremely low-entropy alpha content.
+	update_bitrate(external_alpha_input
+	               ? std::max<uint32_t>(settings.bitrate, 10'000'000u)
+	               : settings.bitrate);
 
 	const OSStatus prepare_status = VTCompressionSessionPrepareToEncodeFrames(session);
 	if (prepare_status != noErr)
@@ -580,13 +607,22 @@ video_encoder_videotoolbox::encode(uint8_t slot, uint64_t frame_index)
 	if (auto bitrate = pending_bitrate.exchange(0))
 	{
 		reconfigure = true;
-		update_bitrate(bitrate);
+		update_bitrate(external_alpha_input
+		               ? std::max<uint32_t>(bitrate, 10'000'000u)
+		               : bitrate);
 	}
 	if (reconfigure)
 		idr->reset();
 
-	auto & idr_handler = ((default_idr_handler &)*idr);
-	auto frame_type = idr_handler.get_type(frame_index);
+	// Alpha stream uses alpha_idr_handler (no skip, no feedback cycle) and
+	// all-IDR session config, so we always force a keyframe.
+	bool force_keyframe = external_alpha_input;
+	if (!external_alpha_input)
+	{
+		auto & idr_handler = ((default_idr_handler &)*idr);
+		auto frame_type = idr_handler.get_type(frame_index);
+		force_keyframe = (frame_type == default_idr_handler::frame_type::i);
+	}
 
 	const int64_t pixel_buffer_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
 	CVPixelBufferRef pixel_buffer = in[slot].pixel_buffer;
@@ -608,7 +644,7 @@ video_encoder_videotoolbox::encode(uint8_t slot, uint64_t frame_index)
 	request->stream_idx = stream_idx;
 
 	CFDictionaryRef frame_properties = nullptr;
-	if (frame_type == default_idr_handler::frame_type::i)
+	if (force_keyframe)
 	{
 		const void * keys[] = {kVTEncodeFrameOptionKey_ForceKeyFrame};
 		const void * values[] = {kCFBooleanTrue};
