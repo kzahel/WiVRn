@@ -134,7 +134,12 @@ video_encoder_videotoolbox::video_encoder_videotoolbox(
 		        "videotoolbox rgba buffer");
 	}
 
-	const OSType pixel_format = kCVPixelFormatType_32BGRA;
+	// Alpha stream: use NV12 full-range pixel buffers so we can write luma
+	// values directly without BGRA→YCbCr limited-range conversion (which
+	// would map 255→235 and cause ~8% transparency on opaque surfaces).
+	const OSType pixel_format = external_alpha_input
+	        ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+	        : kCVPixelFormatType_32BGRA;
 	CFDictionaryRef source_attributes = create_source_attributes(extent.width, extent.height, pixel_format);
 
 	const void * encoder_keys[] = {
@@ -204,7 +209,7 @@ video_encoder_videotoolbox::configure_session(const encoder_settings & settings)
 	// Alpha stream: use high bitrate to prevent low-latency rate controller
 	// from dropping frames on the extremely low-entropy alpha content.
 	update_bitrate(external_alpha_input
-	               ? std::max<uint32_t>(settings.bitrate, 10'000'000u)
+	               ? std::max<uint32_t>(settings.bitrate, 5'000'000u)
 	               : settings.bitrate);
 
 	const OSStatus prepare_status = VTCompressionSessionPrepareToEncodeFrames(session);
@@ -529,7 +534,6 @@ video_encoder_videotoolbox::copy_rgba_to_bgra_pixel_buffer(uint8_t slot, CVPixel
 void
 video_encoder_videotoolbox::prepare_external_alpha_rgba(uint8_t slot)
 {
-	auto * dst = static_cast<uint8_t *>(in[slot].rgba.map());
 	const uint32_t output_width = extent.width;
 	const uint32_t output_height = extent.height;
 	const uint32_t eye_output_width = output_width / 2;
@@ -548,6 +552,15 @@ video_encoder_videotoolbox::prepare_external_alpha_rgba(uint8_t slot)
 	        external_alpha_sources[0]->data<uint8_t>(),
 	        external_alpha_sources[1]->data<uint8_t>(),
 	};
+
+	// Write alpha directly into the NV12 full-range pixel buffer's luma
+	// plane.  This avoids the BGRA→YCbCr limited-range conversion that
+	// would map 255→235 and cause ~8% transparency on opaque surfaces.
+	CVPixelBufferRef pixel_buffer = in[slot].pixel_buffer;
+	CVPixelBufferLockBaseAddress(pixel_buffer, 0);
+
+	auto * y_plane = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 0));
+	const size_t y_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 0);
 
 	for (uint32_t y = 0; y < output_height; ++y)
 	{
@@ -570,14 +583,18 @@ video_encoder_videotoolbox::prepare_external_alpha_rgba(uint8_t slot)
 				}
 			}
 
-			const uint8_t alpha = uint8_t(alpha_sum / 4);
-			const size_t dst_index = (size_t(y) * output_width + x) * 4;
-			dst[dst_index + 0] = alpha;
-			dst[dst_index + 1] = alpha;
-			dst[dst_index + 2] = alpha;
-			dst[dst_index + 3] = 255;
+			y_plane[y * y_stride + x] = uint8_t(alpha_sum / 4);
 		}
 	}
+
+	// Fill CbCr plane with 128 (neutral chroma).
+	auto * cbcr_plane = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 1));
+	const size_t cbcr_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 1);
+	const uint32_t cbcr_height = (output_height + 1) / 2;
+	for (uint32_t y = 0; y < cbcr_height; ++y)
+		memset(cbcr_plane + y * cbcr_stride, 128, ((output_width + 1) / 2) * 2);
+
+	CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
 }
 
 CVPixelBufferRef
@@ -590,6 +607,7 @@ video_encoder_videotoolbox::create_source_pixel_buffer(OSType pixel_format)
 	CFRelease(attributes);
 	if (status != noErr || pixel_buffer == nullptr)
 		throw std::runtime_error("Failed to create reusable VideoToolbox source pixel buffer: " + osstatus_string(status));
+
 	return pixel_buffer;
 }
 
@@ -608,7 +626,7 @@ video_encoder_videotoolbox::encode(uint8_t slot, uint64_t frame_index)
 	{
 		reconfigure = true;
 		update_bitrate(external_alpha_input
-		               ? std::max<uint32_t>(bitrate, 10'000'000u)
+		               ? std::max<uint32_t>(bitrate, 5'000'000u)
 		               : bitrate);
 	}
 	if (reconfigure)
@@ -632,12 +650,20 @@ video_encoder_videotoolbox::encode(uint8_t slot, uint64_t frame_index)
 
 	OSStatus status = noErr;
 	const int64_t source_copy_begin_ns = log_host_timing ? os_monotonic_get_ns() : 0;
-	status = CVPixelBufferLockBaseAddress(pixel_buffer, 0);
-	if (status != noErr)
-		throw std::runtime_error("Failed to lock VideoToolbox pixel buffer: " + osstatus_string(status));
-	copy_rgba_to_bgra_pixel_buffer(slot, pixel_buffer);
+	if (external_alpha_input)
+	{
+		// Alpha stream: pixel buffer was already filled with NV12 luma data
+		// in prepare_external_alpha_rgba(), nothing to copy here.
+	}
+	else
+	{
+		status = CVPixelBufferLockBaseAddress(pixel_buffer, 0);
+		if (status != noErr)
+			throw std::runtime_error("Failed to lock VideoToolbox pixel buffer: " + osstatus_string(status));
+		copy_rgba_to_bgra_pixel_buffer(slot, pixel_buffer);
+		CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
+	}
 	const int64_t source_copy_end_ns = log_host_timing ? os_monotonic_get_ns() : 0;
-	CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
 
 	auto request = std::make_shared<encode_request>();
 	request->frame_index = frame_index;
